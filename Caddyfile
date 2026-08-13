@@ -1,0 +1,12 @@
+{$SITE_ADDRESS:localhost} {
+	encode gzip zstd
+
+	@websockets {
+		path /ws*
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websockets realtime:8080
+
+	reverse_proxy app:3000
+}

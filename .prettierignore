@@ -1,0 +1,12 @@
+node_modules
+.next
+build
+dist
+coverage
+prisma/migrations
+src/generated
+package-lock.json
+
+# hand-maintained project docs — not code, keep their own style
+CLAUDE.md
+docs/
