@@ -1,0 +1,35 @@
+// Prisma schema for the desk booking system.
+// Phase 0: datasource, generator, and the three fixed-value enums only.
+// The 13 core entities (see CLAUDE.md) are modelled in Phase 1, together with
+// the hand-written migration adding the no-overlap exclusion constraints —
+// see docs/Desk-Booking-System-Spec-v2.md and CLAUDE.md architectural rule 1.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STANDARD_USER
+  SITE_ADMIN
+  SUPER_ADMIN
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CHECKED_IN
+  CANCELLED
+  AUTO_CANCELLED
+  COMPLETED
+}
+
+enum DeskState {
+  AVAILABLE
+  BOOKED
+  SCHEDULED
+  INACTIVE
+}
