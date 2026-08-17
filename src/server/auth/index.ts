@@ -1,22 +1,7 @@
 import "server-only";
 
-import { Role } from "@/generated/prisma/enums";
+import NextAuth from "next-auth";
 
-import type { Session } from "./roles";
+import { authConfig } from "@/server/auth/config";
 
-/**
- * Phase 0 stand-in for Auth.js. This is the one function Phase 1 replaces
- * with a real `auth()` call — every caller already goes through here, so
- * swapping the implementation is a one-file change.
- */
-export function getSession(): Session {
-  return {
-    user: {
-      id: "seed-super-admin",
-      name: "Alex Super",
-      email: "alex.super@example.com",
-      role: Role.SUPER_ADMIN,
-      adminSiteIds: [],
-    },
-  };
-}
+export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

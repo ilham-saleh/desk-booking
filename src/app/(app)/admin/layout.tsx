@@ -1,15 +1,13 @@
-import { getSession } from "@/server/auth";
-import { isSiteAdmin } from "@/server/auth/roles";
+import { redirect } from "next/navigation";
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const session = getSession();
+import { auth } from "@/server/auth";
+import { isSiteAdminRole } from "@/server/auth/roles";
 
-  if (!isSiteAdmin(session)) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        Admin only. Real enforcement moves to route middleware in Phase 1.
-      </p>
-    );
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+
+  if (!session || !isSiteAdminRole(session)) {
+    redirect("/home");
   }
 
   return children;

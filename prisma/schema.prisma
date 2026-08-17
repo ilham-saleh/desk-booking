@@ -1,8 +1,9 @@
-// Prisma schema for the desk booking system.
-// Phase 0: datasource, generator, and the three fixed-value enums only.
-// The 13 core entities (see CLAUDE.md) are modelled in Phase 1, together with
-// the hand-written migration adding the no-overlap exclusion constraints —
-// see docs/Desk-Booking-System-Spec-v2.md and CLAUDE.md architectural rule 1.
+// Prisma schema for the desk booking system — multi-tenant SaaS (CLAUDE.md v2.2).
+// 14 core entities. Every tenant-owned model carries an explicit organizationId,
+// enforced centrally by the tenant-scoping client (src/server/db/tenant-scope.ts) —
+// see CLAUDE.md architectural rule 1. The no-overlap booking constraint (rule 2) is
+// added by a hand-written migration in Phase 2 — the Booking shape here doesn't have
+// it yet.
 
 generator client {
   provider = "prisma-client"
@@ -14,9 +15,22 @@ datasource db {
 }
 
 enum Role {
-  STANDARD_USER
+  PLATFORM_ADMIN
+  ORG_SUPER_ADMIN
   SITE_ADMIN
-  SUPER_ADMIN
+  STANDARD_USER
+}
+
+enum OrgStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+}
+
+enum FloorPlanVersionStatus {
+  DRAFT
+  LIVE
+  ARCHIVED
 }
 
 enum BookingStatus {
@@ -32,4 +46,284 @@ enum DeskState {
   BOOKED
   SCHEDULED
   INACTIVE
+}
+
+/// The tenant. Every other model belongs to exactly one Organization, except
+/// User — nullable there, and null only for PLATFORM_ADMIN (who belongs to no org).
+model Organization {
+  id     String    @id @default(cuid())
+  name   String
+  slug   String    @unique
+  status OrgStatus @default(ACTIVE)
+
+  ssoGoogleDomains String[]
+  ssoEntraTenantId String?
+  ssoEntraIssuer   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users             User[]
+  permissions       Permission[]
+  sites             Site[]
+  floors            Floor[]
+  floorPlanVersions FloorPlanVersion[]
+  desks             Desk[]
+  rooms             Room[]
+  utilities         Utility[]
+  bookings          Booking[]
+  deskWatches       DeskWatch[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String? // null only for PLATFORM_ADMIN
+  email          String
+  name           String
+  role           Role
+  department     String?
+  isActive       Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  permissions              Permission[]
+  bookingsAsUser           Booking[]          @relation("BookingUser")
+  bookingsBookedBy         Booking[]          @relation("BookingBookedBy")
+  bookingsCancelledBy      Booking[]          @relation("BookingCancelledBy")
+  deskWatches              DeskWatch[]
+  notifications            Notification[]
+  auditLogs                AuditLog[]
+  createdFloorPlanVersions FloorPlanVersion[]
+
+  @@unique([organizationId, email])
+  @@map("users")
+}
+
+model Permission {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  siteId         String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  site         Site         @relation(fields: [siteId], references: [id])
+
+  @@unique([userId, siteId])
+  @@map("permissions")
+}
+
+model Site {
+  id             String @id @default(cuid())
+  organizationId String
+  name           String
+  address        String?
+  timeZone       String
+
+  /// Minutes from local midnight, e.g. 420 = 07:00, 1080 = 18:00.
+  operatingHoursStart Int @default(0)
+  operatingHoursEnd   Int @default(1440)
+
+  photoUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  floors       Floor[]
+  permissions  Permission[]
+
+  @@map("sites")
+}
+
+model Floor {
+  id             String @id @default(cuid())
+  organizationId String
+  siteId         String
+  name           String
+  sortOrder      Int    @default(0)
+
+  livePlanVersionId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization    Organization      @relation(fields: [organizationId], references: [id])
+  site            Site              @relation(fields: [siteId], references: [id])
+  livePlanVersion FloorPlanVersion? @relation("FloorLiveVersion", fields: [livePlanVersionId], references: [id])
+  planVersions    FloorPlanVersion[] @relation("FloorVersions")
+  desks           Desk[]
+  rooms           Room[]
+  utilities       Utility[]
+
+  @@map("floors")
+}
+
+/// Draft/live/archived history for a floor's map background — enables the
+/// draft-vs-live editor workflow (CLAUDE.md rule 8) and rollback.
+model FloorPlanVersion {
+  id               String                 @id @default(cuid())
+  organizationId   String
+  floorId          String
+  status           FloorPlanVersionStatus @default(DRAFT)
+  sourceFileKey    String
+  renderedImageKey String?
+  createdById      String
+  publishedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  floor        Floor        @relation("FloorVersions", fields: [floorId], references: [id])
+  createdBy    User         @relation(fields: [createdById], references: [id])
+  liveForFloor Floor?       @relation("FloorLiveVersion")
+
+  @@map("floor_plan_versions")
+}
+
+model Desk {
+  id             String  @id @default(cuid())
+  organizationId String
+  floorId        String
+  number         String
+  name           String?
+  x              Float
+  y              Float
+  capacity       Int     @default(1)
+  isActive       Boolean @default(true)
+  requiresCheckIn Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  floor        Floor        @relation(fields: [floorId], references: [id])
+  bookings     Booking[]
+  deskWatches  DeskWatch[]
+
+  @@unique([floorId, number])
+  @@map("desks")
+}
+
+/// Meeting room — drawn on the map, never bookable (CLAUDE.md rule 9).
+model Room {
+  id             String @id @default(cuid())
+  organizationId String
+  floorId        String
+  name           String
+  x              Float
+  y              Float
+  width          Float
+  height         Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  floor        Floor        @relation(fields: [floorId], references: [id])
+
+  @@map("rooms")
+}
+
+/// Non-desk map element (printer, kitchen, etc.) — display only.
+model Utility {
+  id             String  @id @default(cuid())
+  organizationId String
+  floorId        String
+  type           String
+  label          String?
+  x              Float
+  y              Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  floor        Floor        @relation(fields: [floorId], references: [id])
+
+  @@map("utilities")
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  organizationId String
+  deskId         String
+  userId         String? // null when booked for a guest (see guestName)
+  guestName      String?
+  bookedById     String // always set — who performed the booking (self, or admin-on-behalf)
+  date           DateTime      @db.Date // site-local calendar date, weekdays only
+  startAt        DateTime // UTC instant — rule 3
+  endAt          DateTime // UTC instant — rule 3
+  status         BookingStatus @default(CONFIRMED)
+  checkedInAt    DateTime?
+  cancelledAt    DateTime?
+  cancelledById  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  desk         Desk         @relation(fields: [deskId], references: [id])
+  user         User?        @relation("BookingUser", fields: [userId], references: [id])
+  bookedBy     User         @relation("BookingBookedBy", fields: [bookedById], references: [id])
+  cancelledBy  User?        @relation("BookingCancelledBy", fields: [cancelledById], references: [id])
+
+  @@map("bookings")
+}
+
+model DeskWatch {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  deskId         String
+  createdAt      DateTime  @default(now())
+  notifiedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  desk         Desk         @relation(fields: [deskId], references: [id])
+
+  @@unique([userId, deskId])
+  @@map("desk_watches")
+}
+
+model Notification {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  type           String
+  payload        Json
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String? // nullable: leaves room for system/background-job actions (e.g. Phase 3 auto-cancel)
+  action         String
+  targetType     String
+  targetId       String
+  before         Json?
+  after          Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User?        @relation(fields: [actorId], references: [id])
+
+  @@map("audit_logs")
 }

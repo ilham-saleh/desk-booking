@@ -1,9 +1,14 @@
-import { getSession } from "@/server/auth";
+import { redirect } from "next/navigation";
+
+import { auth } from "@/server/auth";
 import { DesktopSidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = getSession();
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const session = await auth();
+  if (!session) {
+    redirect("/sign-in");
+  }
 
   return (
     <div className="flex h-screen flex-col">

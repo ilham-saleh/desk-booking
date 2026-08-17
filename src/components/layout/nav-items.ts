@@ -33,7 +33,7 @@ const adminNavItems: NavItem[] = [
 
 /** Display concern only — actual authorization is re-checked server-side on every request. */
 function isAdminRole(role: Role): boolean {
-  return role === Role.SITE_ADMIN || role === Role.SUPER_ADMIN;
+  return role === Role.SITE_ADMIN || role === Role.ORG_SUPER_ADMIN;
 }
 
 export function getNavItems(role: Role): NavItem[] {
