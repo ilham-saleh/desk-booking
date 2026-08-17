@@ -9,6 +9,7 @@ const serverSchema = z.object({
 
   // Optional until Phase 1 wires up migrations/seed against a real database.
   DATABASE_URL: z.string().optional(),
+  DATABASE_URL_TEST: z.string().optional(),
 
   AUTH_SECRET: z.string().optional(),
   AUTH_URL: z.string().optional(),
@@ -17,9 +18,10 @@ const serverSchema = z.object({
   AUTH_MICROSOFT_ENTRA_ID_ID: z.string().optional(),
   AUTH_MICROSOFT_ENTRA_ID_SECRET: z.string().optional(),
   AUTH_MICROSOFT_ENTRA_ID_ISSUER: z.string().optional(),
-  AUTH_ALLOW_AUTO_PROVISION: z
+  // Ignored whenever NODE_ENV=production, regardless of this value.
+  AUTH_ENABLE_DEV_LOGIN: z
     .string()
-    .default("true")
+    .default("false")
     .transform((value) => value === "true"),
 
   REALTIME_PORT: z.coerce.number().int().positive().default(8080),
