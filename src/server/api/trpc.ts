@@ -52,7 +52,7 @@ export const orgProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (!organizationId) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
-  return next({ ctx: { ...ctx, db: getScopedDb(organizationId), organizationId } });
+  return next({ ctx: { ...ctx, db: getScopedDb(ctx.db, organizationId), organizationId } });
 });
 
 /**

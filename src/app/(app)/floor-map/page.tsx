@@ -1,11 +1,7 @@
-import { PhasePlaceholder } from "@/components/layout/phase-placeholder";
+import { auth } from "@/server/auth";
+import { FloorMapView } from "@/components/floor-map/floor-map-view";
 
-export default function FloorMapPage() {
-  return (
-    <PhasePlaceholder
-      title="Floor Map"
-      phase="Phase 2 (Core booking)"
-      description="Interactive react-konva floor plan with live desk availability and a desk info panel."
-    />
-  );
+export default async function FloorMapPage() {
+  const session = await auth();
+  return <FloorMapView currentUserRole={session!.user.role} />;
 }

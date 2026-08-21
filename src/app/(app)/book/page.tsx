@@ -1,11 +1,7 @@
-import { PhasePlaceholder } from "@/components/layout/phase-placeholder";
+import { auth } from "@/server/auth";
+import { BookADeskView } from "@/components/booking/book-a-desk-view";
 
-export default function BookPage() {
-  return (
-    <PhasePlaceholder
-      title="Book a Desk"
-      phase="Phase 2 (Core booking)"
-      description="Pick a site, date, and time range, then find and confirm an available desk."
-    />
-  );
+export default async function BookPage() {
+  const session = await auth();
+  return <BookADeskView currentUserRole={session!.user.role} />;
 }
