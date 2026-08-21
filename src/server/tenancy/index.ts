@@ -1,13 +1,18 @@
 import "server-only";
 
-import { db } from "@/server/db";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { scopedDb, type ScopedDb } from "@/server/db/tenant-scope";
 
 export type { ScopedDb };
 
-/** The tRPC context's org-scoped Prisma client — see tenant-scope.ts for what it enforces. */
-export function getScopedDb(organizationId: string) {
-  return scopedDb(db, organizationId);
+/**
+ * The tRPC context's org-scoped Prisma client — see tenant-scope.ts for what
+ * it enforces. Takes the raw client from the caller's own context (rather
+ * than importing the `@/server/db` singleton itself) so tests can inject a
+ * client pointed at DATABASE_URL_TEST via `appRouter.createCaller`.
+ */
+export function getScopedDb(rawDb: PrismaClient, organizationId: string) {
+  return scopedDb(rawDb, organizationId);
 }
 
 /** One-off cross-check for resources fetched by id before acting on them. */
