@@ -12,5 +12,11 @@ const createContext = cache(async () => {
   return createTRPCContext({ headers: heads });
 });
 
-/** Direct server-side caller for use in Server Components — no HTTP round trip. */
-export const api = appRouter.createCaller(await createContext());
+/**
+ * Direct server-side caller for use in Server Components — no HTTP round
+ * trip. Passes the context *function* (React-cache-memoized per request),
+ * not an awaited context object — the latter would resolve once at module
+ * load and bind every subsequent request, regardless of caller, to whichever
+ * session happened to be active first.
+ */
+export const api = appRouter.createCaller(createContext);
