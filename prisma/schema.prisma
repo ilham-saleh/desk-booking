@@ -1,9 +1,10 @@
 // Prisma schema for the desk booking system — multi-tenant SaaS (CLAUDE.md v2.2).
 // 14 core entities. Every tenant-owned model carries an explicit organizationId,
 // enforced centrally by the tenant-scoping client (src/server/db/tenant-scope.ts) —
-// see CLAUDE.md architectural rule 1. The no-overlap booking constraint (rule 2) is
-// added by a hand-written migration in Phase 2 — the Booking shape here doesn't have
-// it yet.
+// see CLAUDE.md architectural rule 1. The no-double-booking (rule 2) and
+// one-active-booking-per-user (rule 4) constraints are GiST exclusion constraints
+// added by a hand-written migration (prisma/migrations/*_booking_overlap_constraints)
+// — Prisma has no schema syntax for EXCLUDE constraints, so they're invisible here.
 
 generator client {
   provider = "prisma-client"
@@ -176,6 +177,10 @@ model FloorPlanVersion {
   status           FloorPlanVersionStatus @default(DRAFT)
   sourceFileKey    String
   renderedImageKey String?
+  /// Pixel dimensions of renderedImageKey — the floor-map canvas needs these to
+  /// scale the background image and position desks/rooms/utilities correctly.
+  imageWidth       Int?
+  imageHeight      Int?
   createdById      String
   publishedAt      DateTime?
 
