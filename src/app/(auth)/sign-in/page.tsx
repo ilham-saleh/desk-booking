@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/server/db";
 import { devLoginEnabled } from "@/server/auth/config";
+import { entraEnabled, googleEnabled } from "@/server/auth/edge-config";
 import { signIn } from "@/server/auth";
 
 async function signInWithGoogle() {
@@ -36,16 +37,20 @@ export default async function SignInPage() {
         <CardDescription>Auth.js — Google + Microsoft Entra ID, per-organization SSO.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        <form action={signInWithGoogle}>
-          <Button variant="outline" type="submit" className="w-full">
-            Continue with Google
-          </Button>
-        </form>
-        <form action={signInWithEntra}>
-          <Button variant="outline" type="submit" className="w-full">
-            Continue with Microsoft
-          </Button>
-        </form>
+        {googleEnabled && (
+          <form action={signInWithGoogle}>
+            <Button variant="outline" type="submit" className="w-full">
+              Continue with Google
+            </Button>
+          </form>
+        )}
+        {entraEnabled && (
+          <form action={signInWithEntra}>
+            <Button variant="outline" type="submit" className="w-full">
+              Continue with Microsoft
+            </Button>
+          </form>
+        )}
 
         {devLoginEnabled && (
           <form action={signInWithDevCredentials} className="mt-4 flex flex-col gap-2 border-t pt-4">
