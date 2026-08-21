@@ -1,8 +1,14 @@
 import "dotenv/config";
 
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { PrismaPg } from "@prisma/adapter-pg";
 
 import { PrismaClient, Role } from "@/generated/prisma/client";
+import { floorPlanKey, storage } from "@/server/storage";
+import { renderPdfFirstPageToPng } from "@/server/storage/render-pdf";
+import { FLOOR_LAYOUTS } from "./seed-data/floor-layouts";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
@@ -106,12 +112,98 @@ async function main() {
     },
   });
 
+  const floors = await seedFloorPlans(org.id, site.id, orgSuperAdmin.id);
+
   console.log("Seeded customer-zero:", {
     organization: org.slug,
     orgSuperAdmin: orgSuperAdmin.email,
     siteAdmin: siteAdmin.email,
     site: site.name,
+    floors: floors.map((f) => f.name),
   });
+}
+
+/**
+ * Seeds the three real floor plans (docs/floorplans/Floor-{2,4,5}.pdf) as
+ * rasterized, published floor-map backgrounds with placed desks/rooms/
+ * utilities — see prisma/seed-data/floor-layouts.ts for the placement data
+ * and its accuracy caveats. Idempotent: skips rendering/uploading for a
+ * floor that already has a live plan version.
+ */
+async function seedFloorPlans(organizationId: string, siteId: string, createdById: string) {
+  const floors = [];
+
+  for (const layout of FLOOR_LAYOUTS) {
+    const floor =
+      (await db.floor.findFirst({ where: { organizationId, siteId, name: layout.floorName } })) ??
+      (await db.floor.create({
+        data: { organizationId, siteId, name: layout.floorName, sortOrder: layout.sortOrder },
+      }));
+
+    if (!floor.livePlanVersionId) {
+      const pdfBytes = await readFile(join(process.cwd(), "docs/floorplans", `${layout.pdfBaseName}.pdf`));
+      const { png, width, height } = await renderPdfFirstPageToPng(new Uint8Array(pdfBytes));
+
+      const version = await db.floorPlanVersion.create({
+        data: { organizationId, floorId: floor.id, status: "DRAFT", sourceFileKey: "", createdById },
+      });
+      const sourceFileKey = floorPlanKey(organizationId, floor.id, version.id, "pdf");
+      const renderedImageKey = floorPlanKey(organizationId, floor.id, version.id, "png");
+      await storage.putObject(sourceFileKey, pdfBytes, "application/pdf");
+      await storage.putObject(renderedImageKey, png, "image/png");
+      await db.floorPlanVersion.update({
+        where: { id: version.id },
+        data: {
+          status: "LIVE",
+          sourceFileKey,
+          renderedImageKey,
+          imageWidth: width,
+          imageHeight: height,
+          publishedAt: new Date(),
+        },
+      });
+      await db.floor.update({ where: { id: floor.id }, data: { livePlanVersionId: version.id } });
+    }
+
+    for (const desk of layout.desks) {
+      await db.desk.upsert({
+        where: { floorId_number: { floorId: floor.id, number: desk.number } },
+        update: {},
+        create: {
+          organizationId,
+          floorId: floor.id,
+          number: desk.number,
+          x: desk.x,
+          y: desk.y,
+          requiresCheckIn: desk.requiresCheckIn ?? false,
+        },
+      });
+    }
+
+    for (const room of layout.rooms) {
+      const existing = await db.room.findFirst({ where: { floorId: floor.id, name: room.name } });
+      if (!existing) {
+        await db.room.create({
+          data: { organizationId, floorId: floor.id, name: room.name, x: room.x, y: room.y, width: room.width, height: room.height },
+        });
+      }
+    }
+
+    for (const utility of layout.utilities) {
+      const existing = await db.utility.findFirst({
+        where: { floorId: floor.id, type: utility.type, label: utility.label ?? null },
+      });
+      if (!existing) {
+        await db.utility.create({
+          data: { organizationId, floorId: floor.id, type: utility.type, label: utility.label, x: utility.x, y: utility.y },
+        });
+      }
+    }
+
+    floors.push(floor);
+  }
+
+  return floors;
 }
 
 main()
