@@ -11,11 +11,16 @@ import { env } from "@/lib/env";
  * sign-in attempts through that specific provider. So each provider is only
  * added once its required env vars are actually set.
  */
+export const googleEnabled = Boolean(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET);
+export const entraEnabled = Boolean(
+  env.AUTH_MICROSOFT_ENTRA_ID_ID && env.AUTH_MICROSOFT_ENTRA_ID_SECRET && env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+);
+
 const edgeProviders: NextAuthConfig["providers"] = [];
-if (env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET) {
+if (googleEnabled) {
   edgeProviders.push(Google);
 }
-if (env.AUTH_MICROSOFT_ENTRA_ID_ID && env.AUTH_MICROSOFT_ENTRA_ID_SECRET && env.AUTH_MICROSOFT_ENTRA_ID_ISSUER) {
+if (entraEnabled) {
   edgeProviders.push(MicrosoftEntraID);
 }
 
