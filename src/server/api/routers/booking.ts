@@ -1,11 +1,20 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
-import { cancelBookingInputSchema, createBookingInputSchema, dateStringSchema, timeSlotMinutesSchema } from "@/lib/schemas/booking";
+import {
+  cancelBookingInputSchema,
+  checkInInputSchema,
+  createBookingInputSchema,
+  dateStringSchema,
+  endBookingInputSchema,
+  timeSlotMinutesSchema,
+} from "@/lib/schemas/booking";
 import { createTRPCRouter, orgProcedure } from "@/server/api/trpc";
 import { cancelBooking } from "@/server/booking/cancel-booking";
+import { checkInToBooking } from "@/server/booking/check-in";
 import { createBooking } from "@/server/booking/create-booking";
 import { ACTIVE_BOOKING_STATUSES, computeDeskState, isDeskFreeForRange } from "@/server/booking/desk-state";
+import { endBookingEarly } from "@/server/booking/end-booking";
 import { zonedDateTimeToUtc } from "@/server/booking/time";
 
 const getFloorAvailabilityInput = z
@@ -59,6 +68,10 @@ export const bookingRouter = createTRPCRouter({
           ? isDeskFreeForRange(deskBookings, requestedRange.start, requestedRange.end)
           : undefined,
         bookings: activeBookings.map((booking) => ({
+          id: booking.id,
+          status: booking.status,
+          userId: booking.userId,
+          bookedById: booking.bookedById,
           startAt: booking.startAt,
           endAt: booking.endAt,
           occupantLabel: booking.user?.name ?? booking.guestName ?? "Guest",
@@ -73,15 +86,25 @@ export const bookingRouter = createTRPCRouter({
 
   cancel: orgProcedure.input(cancelBookingInputSchema).mutation(({ ctx, input }) => cancelBooking(ctx, input)),
 
+  checkIn: orgProcedure.input(checkInInputSchema).mutation(({ ctx, input }) => checkInToBooking(ctx, input)),
+
+  endBooking: orgProcedure.input(endBookingInputSchema).mutation(({ ctx, input }) => endBookingEarly(ctx, input)),
+
+  /**
+   * Split by whether the booking still occupies a slot (status active AND
+   * endAt in the future) rather than by startAt alone — a booking in
+   * progress right now, or one cancelled ahead of a future start date,
+   * would otherwise fall through both "upcoming" and "past".
+   */
   listMine: orgProcedure
     .input(z.object({ when: z.enum(["upcoming", "past"]) }))
     .query(({ ctx, input }) => {
       const now = new Date();
+      const isCurrentlyActive = { status: { in: ACTIVE_BOOKING_STATUSES }, endAt: { gt: now } };
       return ctx.db.booking.findMany({
         where: {
           userId: ctx.session.user.id,
-          status: input.when === "upcoming" ? { in: ACTIVE_BOOKING_STATUSES } : { notIn: ACTIVE_BOOKING_STATUSES },
-          startAt: input.when === "upcoming" ? { gte: now } : { lt: now },
+          ...(input.when === "upcoming" ? isCurrentlyActive : { NOT: isCurrentlyActive }),
         },
         orderBy: { startAt: input.when === "upcoming" ? "asc" : "desc" },
         include: { desk: { include: { floor: { include: { site: true } } } } },
