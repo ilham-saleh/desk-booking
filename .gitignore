@@ -17,6 +17,9 @@ dist/
 # uploads (Docker volume in dev; not part of the repo)
 uploads/
 
+# local design-reference screenshots (may contain real employee data; never commit)
+docs/examples/
+
 # prisma generated client output
 src/generated/prisma/
 
