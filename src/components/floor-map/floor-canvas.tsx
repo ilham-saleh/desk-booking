@@ -140,8 +140,11 @@ export function FloorCanvas({
                 radius={DESK_RADIUS}
                 fill={DESK_COLORS[desk.state]}
                 opacity={eligible ? 1 : 0.25}
-                stroke={isSelected ? "#111827" : undefined}
-                strokeWidth={isSelected ? 3 : 0}
+                shadowColor="#000"
+                shadowBlur={isSelected ? 8 : 3}
+                shadowOpacity={isSelected ? 0.35 : 0.15}
+                stroke={isSelected ? "#111827" : desk.requiresCheckIn ? "#ffffff" : undefined}
+                strokeWidth={isSelected ? 3 : desk.requiresCheckIn ? 2 : 0}
                 onClick={() => eligible && onSelectDesk(desk.id)}
                 onTap={() => eligible && onSelectDesk(desk.id)}
                 onMouseEnter={(e) => {
@@ -153,6 +156,20 @@ export function FloorCanvas({
               />
             );
           })}
+          {desks
+            .filter((desk) => desk.requiresCheckIn)
+            .map((desk) => (
+              <Circle
+                key={`${desk.id}-checkin-badge`}
+                x={desk.x + DESK_RADIUS - 3}
+                y={desk.y - DESK_RADIUS + 3}
+                radius={4}
+                fill="#0ea5e9"
+                stroke="#ffffff"
+                strokeWidth={1}
+                listening={false}
+              />
+            ))}
           {desks.map((desk) => (
             <Text
               key={`${desk.id}-label`}
@@ -168,7 +185,7 @@ export function FloorCanvas({
         </Layer>
       </Stage>
 
-      <FloorLegend className="border-t px-3 py-2" />
+      <FloorLegend className="border-t bg-muted/30 px-4 py-2.5" />
     </div>
   );
 }
@@ -181,13 +198,17 @@ function FloorLegend({ className }: { className?: string }) {
     [DeskState.INACTIVE, "Inactive"],
   ];
   return (
-    <div className={cn("flex flex-wrap gap-4 text-xs", className)}>
+    <div className={cn("flex flex-wrap items-center gap-4 text-xs", className)}>
       {entries.map(([state, label]) => (
         <span key={state} className="flex items-center gap-1.5">
           <span className="inline-block size-2.5 rounded-full" style={{ backgroundColor: DESK_COLORS[state] }} />
           {label}
         </span>
       ))}
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block size-2.5 rounded-full bg-sky-500" />
+        Requires check-in
+      </span>
     </div>
   );
 }

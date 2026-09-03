@@ -8,23 +8,17 @@ import { buildTimeOptions, formatMinutesLabel, todayInTimeZone } from "@/lib/tim
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BookingSubjectFields, type BookingSubjectMode } from "@/components/booking/subject-fields";
 import { FloorCanvas, type FloorCanvasDesk } from "@/components/floor-map/floor-canvas";
 
 export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
   const isAdmin = currentUserRole === Role.SITE_ADMIN || currentUserRole === Role.ORG_SUPER_ADMIN;
   const sites = api.site.list.useQuery();
+  const orgUsers = api.user.listActive.useQuery(undefined, { enabled: isAdmin });
 
   const [siteId, setSiteId] = useState<string>("");
   const [date, setDate] = useState("");
@@ -234,17 +228,31 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
         </>
       )}
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm booking</DialogTitle>
-            <DialogDescription>
-              Desk {selectedDesk?.number} on {date}, {formatMinutesLabel(startMinutes ?? 0)}–
-              {formatMinutesLabel(endMinutes ?? 0)}
-              {subjectMode === "guest" && guestName && ` for guest ${guestName}`}.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+      <Sheet open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <SheetContent className="w-full sm:max-w-md">
+          <SheetHeader className="border-b">
+            <SheetTitle>Confirm booking</SheetTitle>
+            <SheetDescription>Review the details, then confirm to book this desk.</SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-3 p-4 text-sm">
+            <SummaryRow
+              label="Occupant"
+              value={
+                subjectMode === "guest" && guestName
+                  ? guestName
+                  : subjectMode === "user" && forUserId
+                    ? orgUsers.data?.find((u) => u.id === forUserId)?.name ?? "Selected user"
+                    : "Myself"
+              }
+            />
+            <SummaryRow label="Location" value={`${currentSite?.name ?? ""} / ${floor.data?.name ?? ""}`} />
+            <SummaryRow label="Desk" value={selectedDesk?.number ?? ""} />
+            <SummaryRow label="Date" value={date} />
+            <SummaryRow label="Time" value={`${formatMinutesLabel(startMinutes ?? 0)}–${formatMinutesLabel(endMinutes ?? 0)}`} />
+          </div>
+
+          <SheetFooter className="flex-row justify-end border-t">
             <Button variant="outline" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
@@ -263,9 +271,18 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
             >
               {createBooking.isPending ? "Booking…" : "Confirm"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b pb-2 last:border-b-0">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
     </div>
   );
 }
