@@ -40,3 +40,15 @@ export const cancelBookingInputSchema = z.object({
 });
 
 export type CancelBookingInput = z.infer<typeof cancelBookingInputSchema>;
+
+export const checkInInputSchema = z.object({
+  bookingId: z.string().min(1),
+});
+
+export type CheckInInput = z.infer<typeof checkInInputSchema>;
+
+export const endBookingInputSchema = z.object({
+  bookingId: z.string().min(1),
+});
+
+export type EndBookingInput = z.infer<typeof endBookingInputSchema>;

@@ -1,4 +1,10 @@
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PgBoss } from "pg-boss";
+
+import { PrismaClient } from "@/generated/prisma/client";
+import { runCheckInAutoCancelSweep } from "@/server/booking/auto-cancel";
+
+const CHECK_IN_SWEEP_QUEUE = "booking.check-in-sweep";
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -6,10 +12,22 @@ async function main() {
     return;
   }
 
+  // Not `@/server/db` — that module imports "server-only", which only
+  // no-ops under Next.js's bundler; this process runs under plain tsx/Node.
+  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+
   const boss = new PgBoss(process.env.DATABASE_URL);
   await boss.start();
-  console.log("worker: pg-boss started, no queues registered yet.");
-  console.log("Check-in auto-cancel and reminder queues arrive in Phase 3.");
+  console.log("worker: pg-boss started.");
+
+  await boss.createQueue(CHECK_IN_SWEEP_QUEUE);
+  await boss.work(CHECK_IN_SWEEP_QUEUE, async () => {
+    const cancelled = await runCheckInAutoCancelSweep(db);
+    if (cancelled > 0) console.log(`worker: auto-cancelled ${cancelled} unchecked-in booking(s).`);
+  });
+  await boss.schedule(CHECK_IN_SWEEP_QUEUE, "*/5 * * * *", null, { tz: "Etc/UTC" });
+  console.log("worker: check-in auto-cancel sweep scheduled every 5 minutes.");
+  console.log("Reminders and desk-watch alerts arrive in Phase 5.");
 
   process.on("SIGTERM", () => void boss.stop());
 }

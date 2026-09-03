@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import type { Role } from "@/generated/prisma/enums";
 import { todayInTimeZone } from "@/lib/time-slots";
 import { api } from "@/lib/trpc/client";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,7 +14,7 @@ import { FloorCanvas, type FloorCanvasDesk } from "@/components/floor-map/floor-
 
 const AVAILABILITY_POLL_MS = 15_000;
 
-export function FloorMapView({ currentUserRole }: { currentUserRole: Role }) {
+export function FloorMapView({ currentUserId, currentUserRole }: { currentUserId: string; currentUserRole: Role }) {
   const sites = api.site.list.useQuery();
   const [siteId, setSiteId] = useState<string | null>(null);
   const [floorId, setFloorId] = useState<string | null>(null);
@@ -61,14 +60,15 @@ export function FloorMapView({ currentUserRole }: { currentUserRole: Role }) {
         <p className="text-muted-foreground text-sm">Live desk availability across your sites.</p>
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-end gap-4 rounded-xl border bg-card p-3">
         <div className="grid gap-1.5">
-          <Label>Site</Label>
-          <div className="flex gap-1">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Site</Label>
+          <div className="flex gap-1.5">
             {sites.data?.map((site) => (
               <Button
                 key={site.id}
                 size="sm"
+                className="rounded-full"
                 variant={site.id === effectiveSiteId ? "default" : "outline"}
                 onClick={() => {
                   setSiteId(site.id);
@@ -83,12 +83,13 @@ export function FloorMapView({ currentUserRole }: { currentUserRole: Role }) {
         </div>
 
         <div className="grid gap-1.5">
-          <Label>Floor</Label>
-          <div className="flex gap-1">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wide">Floor</Label>
+          <div className="flex gap-1.5">
             {currentSite?.floors.map((f) => (
               <Button
                 key={f.id}
                 size="sm"
+                className="rounded-full"
                 variant={f.id === effectiveFloorId ? "default" : "outline"}
                 onClick={() => {
                   setFloorId(f.id);
@@ -102,50 +103,53 @@ export function FloorMapView({ currentUserRole }: { currentUserRole: Role }) {
         </div>
 
         <div className="grid gap-1.5">
-          <Label htmlFor="floor-map-date">Date</Label>
+          <Label htmlFor="floor-map-date" className="text-xs text-muted-foreground uppercase tracking-wide">
+            Date
+          </Label>
           <Input
             id="floor-map-date"
             type="date"
-            className="w-40"
+            className="w-40 rounded-full"
             value={effectiveDate ?? ""}
             onChange={(e) => setDate(e.target.value)}
           />
         </div>
       </div>
 
-      <div className={cn("grid gap-4", selectedDesk && "lg:grid-cols-[1fr_320px]")}>
-        {floor.data ? (
-          <FloorCanvas
-            renderedImageKey={floor.data.livePlanVersion?.renderedImageKey ?? null}
-            imageWidth={floor.data.livePlanVersion?.imageWidth ?? null}
-            imageHeight={floor.data.livePlanVersion?.imageHeight ?? null}
-            desks={desks}
-            rooms={floor.data.rooms}
-            utilities={floor.data.utilities}
-            selectedDeskId={selectedDeskId}
-            onSelectDesk={setSelectedDeskId}
-          />
-        ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Loading floor…</CardTitle>
-            </CardHeader>
-            <CardContent />
-          </Card>
-        )}
+      {floor.data ? (
+        <FloorCanvas
+          renderedImageKey={floor.data.livePlanVersion?.renderedImageKey ?? null}
+          imageWidth={floor.data.livePlanVersion?.imageWidth ?? null}
+          imageHeight={floor.data.livePlanVersion?.imageHeight ?? null}
+          desks={desks}
+          rooms={floor.data.rooms}
+          utilities={floor.data.utilities}
+          selectedDeskId={selectedDeskId}
+          onSelectDesk={setSelectedDeskId}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Loading floor…</CardTitle>
+          </CardHeader>
+          <CardContent />
+        </Card>
+      )}
 
-        {selectedDesk && floor.data && (
-          <DeskPanel
-            desk={selectedDesk}
-            site={floor.data.site}
-            occupants={selectedDeskAvailability?.bookings ?? []}
-            currentUserRole={currentUserRole}
-            onBooked={() => {
-              void availability.refetch();
-            }}
-          />
-        )}
-      </div>
+      {selectedDesk && floor.data && (
+        <DeskPanel
+          open={!!selectedDeskId}
+          onOpenChange={(open) => !open && setSelectedDeskId(null)}
+          desk={selectedDesk}
+          site={floor.data.site}
+          occupants={selectedDeskAvailability?.bookings ?? []}
+          currentUserId={currentUserId}
+          currentUserRole={currentUserRole}
+          onChanged={() => {
+            void availability.refetch();
+          }}
+        />
+      )}
     </div>
   );
 }
