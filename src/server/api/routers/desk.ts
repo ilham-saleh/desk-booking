@@ -25,6 +25,23 @@ export const availabilityShiftUpdateInputSchema = availabilityShiftCreateInputSc
 
 export type AvailabilityShiftUpdateInput = z.infer<typeof availabilityShiftUpdateInputSchema>;
 
+export const deskCreateInputSchema = z.object({
+  floorId: z.string().min(1),
+  number: z.string().min(1),
+  name: z.string().optional(),
+  x: z.number().min(0),
+  y: z.number().min(0),
+  spaceType: z.string().optional(),
+});
+
+export type DeskCreateInput = z.infer<typeof deskCreateInputSchema>;
+
+export const deskUpdateInputSchema = deskCreateInputSchema.extend({
+  deskId: z.string().min(1),
+});
+
+export type DeskUpdateInput = z.infer<typeof deskUpdateInputSchema>;
+
 export const deskRouter = createTRPCRouter({
   // ===== AVAILABILITY SHIFTS =====
 
@@ -189,5 +206,161 @@ export const deskRouter = createTRPCRouter({
         include: { restriction: { include: { rules: true } } },
       });
       return shifts;
+    }),
+
+  // ===== DESK CRUD =====
+
+  /**
+   * Create a desk on a floor.
+   * FACILITY_ADMIN or higher.
+   */
+  createDesk: siteAdminProcedure.input(deskCreateInputSchema).mutation(async ({ ctx, input }) => {
+    const floor = await ctx.db.floor.findUnique({
+      where: { id: input.floorId },
+      include: { site: true },
+    });
+    if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found" });
+
+    await assertFacilityAdmin(ctx, floor.siteId);
+
+    const desk = await ctx.db.desk.create({
+      data: {
+        organizationId: ctx.organizationId,
+        floorId: input.floorId,
+        number: input.number,
+        name: input.name,
+        x: input.x,
+        y: input.y,
+        spaceType: input.spaceType,
+      },
+    });
+
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "CREATE",
+        targetType: "Desk",
+        targetId: desk.id,
+        after: { number: desk.number, floor: floor.name },
+      },
+    });
+
+    return desk;
+  }),
+
+  /**
+   * Update a desk.
+   * FACILITY_ADMIN or higher.
+   */
+  updateDesk: siteAdminProcedure.input(deskUpdateInputSchema).mutation(async ({ ctx, input }) => {
+    const desk = await ctx.db.desk.findUnique({
+      where: { id: input.deskId },
+      include: { floor: true },
+    });
+    if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+
+    await assertFacilityAdmin(ctx, desk.floor.siteId);
+
+    const updated = await ctx.db.desk.update({
+      where: { id: input.deskId },
+      data: {
+        number: input.number,
+        name: input.name,
+        x: input.x,
+        y: input.y,
+        spaceType: input.spaceType,
+      },
+    });
+
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "UPDATE",
+        targetType: "Desk",
+        targetId: desk.id,
+        before: { number: desk.number },
+        after: { number: updated.number },
+      },
+    });
+
+    return updated;
+  }),
+
+  /**
+   * Delete a desk.
+   * FACILITY_ADMIN or higher.
+   */
+  deleteDesk: siteAdminProcedure
+    .input(z.object({ deskId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const desk = await ctx.db.desk.findUnique({
+        where: { id: input.deskId },
+        include: { floor: true },
+      });
+      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await assertFacilityAdmin(ctx, desk.floor.siteId);
+
+      await ctx.db.desk.delete({ where: { id: input.deskId } });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "DELETE",
+          targetType: "Desk",
+          targetId: desk.id,
+          before: { number: desk.number },
+        },
+      });
+    }),
+
+  /**
+   * Add attribute to a desk.
+   */
+  addAttribute: siteAdminProcedure
+    .input(z.object({ deskId: z.string().min(1), type: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const desk = await ctx.db.desk.findUnique({
+        where: { id: input.deskId },
+        include: { floor: true },
+      });
+      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await assertFacilityAdmin(ctx, desk.floor.siteId);
+
+      const existing = await ctx.db.deskAttribute.findUnique({
+        where: { deskId_type: { deskId: input.deskId, type: input.type } },
+      });
+      if (existing) return existing;
+
+      return ctx.db.deskAttribute.create({
+        data: {
+          organizationId: ctx.organizationId,
+          deskId: input.deskId,
+          type: input.type,
+        },
+      });
+    }),
+
+  /**
+   * Remove attribute from a desk.
+   */
+  removeAttribute: siteAdminProcedure
+    .input(z.object({ deskId: z.string().min(1), type: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const desk = await ctx.db.desk.findUnique({
+        where: { id: input.deskId },
+        include: { floor: true },
+      });
+      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await assertFacilityAdmin(ctx, desk.floor.siteId);
+
+      await ctx.db.deskAttribute.deleteMany({
+        where: { deskId: input.deskId, type: input.type },
+      });
     }),
 });
