@@ -4,6 +4,7 @@ import { use } from "react";
 import { api } from "@/lib/trpc/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FloorsList } from "@/components/admin/floors-list";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface FacilityDetailPageProps {
   params: Promise<{ siteId: string }>;
@@ -11,7 +12,7 @@ interface FacilityDetailPageProps {
 
 export default function FacilityDetailPage({ params }: FacilityDetailPageProps) {
   const { siteId } = use(params);
-  const { data: facility, isPending, error } = api.facility.get.useQuery({ siteId });
+  const { data: facility, isPending, error } = api.facility.get.useQuery({ siteId }, { staleTime: 0 });
 
   if (isPending) {
     return <div className="space-y-6 p-8">Loading facility...</div>;
@@ -74,34 +75,44 @@ export default function FacilityDetailPage({ params }: FacilityDetailPageProps) 
         </Card>
       </div>
 
-      {/* Operating Hours */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Operating Hours</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {facility.operatingHours && facility.operatingHours.length > 0 ? (
-            <div className="space-y-2">
-              {facility.operatingHours.map((hours) => (
-                <div key={hours.id} className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{dayNames[hours.dayOfWeek]}</span>
-                  <span className="text-gray-600">
-                    {String(Math.floor(hours.openAtMinutes / 60)).padStart(2, "0")}:
-                    {String(hours.openAtMinutes % 60).padStart(2, "0")} —{" "}
-                    {String(Math.floor(hours.closeAtMinutes / 60)).padStart(2, "0")}:
-                    {String(hours.closeAtMinutes % 60).padStart(2, "0")}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500">No operating hours configured</p>
-          )}
-        </CardContent>
-      </Card>
+      {/* Tabs for Floors, Desks, and Settings */}
+      <Tabs defaultValue="floors" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="floors">Floors</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+        </TabsList>
 
-      {/* Floors Management */}
-      <FloorsList siteId={siteId} />
+        <TabsContent value="floors" className="space-y-4">
+          <FloorsList siteId={siteId} />
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Operating Hours</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {facility.operatingHours && facility.operatingHours.length > 0 ? (
+                <div className="space-y-2">
+                  {facility.operatingHours.map((hours) => (
+                    <div key={hours.id} className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{dayNames[hours.dayOfWeek]}</span>
+                      <span className="text-gray-600">
+                        {String(Math.floor(hours.openAtMinutes / 60)).padStart(2, "0")}:
+                        {String(hours.openAtMinutes % 60).padStart(2, "0")} —{" "}
+                        {String(Math.floor(hours.closeAtMinutes / 60)).padStart(2, "0")}:
+                        {String(hours.closeAtMinutes % 60).padStart(2, "0")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">No operating hours configured</p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

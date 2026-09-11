@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,10 +10,11 @@ import { toast } from "sonner";
 
 interface FloorsListProps {
   siteId: string;
-  onFloorsUpdate?: () => void;
+  onFloorsChange?: () => void;
 }
 
-export function FloorsList({ siteId, onFloorsUpdate }: FloorsListProps) {
+export function FloorsList({ siteId, onFloorsChange }: FloorsListProps) {
+  const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [newFloorName, setNewFloorName] = useState("");
 
@@ -23,7 +25,7 @@ export function FloorsList({ siteId, onFloorsUpdate }: FloorsListProps) {
       setNewFloorName("");
       setIsCreating(false);
       await refetch();
-      onFloorsUpdate?.();
+      onFloorsChange?.();
     },
     onError: (error) => {
       toast.error(`Failed to create floor: ${error.message}`);
@@ -34,7 +36,7 @@ export function FloorsList({ siteId, onFloorsUpdate }: FloorsListProps) {
     onSuccess: async () => {
       toast.success("Floor deleted");
       await refetch();
-      onFloorsUpdate?.();
+      onFloorsChange?.();
     },
     onError: (error) => {
       toast.error(`Failed to delete floor: ${error.message}`);
@@ -119,15 +121,29 @@ export function FloorsList({ siteId, onFloorsUpdate }: FloorsListProps) {
                 className="flex items-center justify-between rounded border p-3 hover:bg-accent"
               >
                 <span className="font-medium">{floor.name}</span>
-                <Button
-                  onClick={() => handleDeleteFloor(floor.id)}
-                  variant="ghost"
-                  size="sm"
-                  disabled={deleteFloor.isPending}
-                  className="text-red-600 hover:text-red-700"
-                >
-                  Delete
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => {
+                      const href = "/admin/floors/" + floor.id;
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      router.push(href as any);
+                    }}
+                    variant="ghost"
+                    size="sm"
+                    className="text-blue-600 hover:text-blue-700"
+                  >
+                    Manage Desks
+                  </Button>
+                  <Button
+                    onClick={() => handleDeleteFloor(floor.id)}
+                    variant="ghost"
+                    size="sm"
+                    disabled={deleteFloor.isPending}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    Delete
+                  </Button>
+                </div>
               </div>
             ))}
           </div>

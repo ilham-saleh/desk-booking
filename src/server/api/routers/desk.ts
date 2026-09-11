@@ -43,6 +43,36 @@ export const deskUpdateInputSchema = deskCreateInputSchema.extend({
 export type DeskUpdateInput = z.infer<typeof deskUpdateInputSchema>;
 
 export const deskRouter = createTRPCRouter({
+  // ===== DESK QUERIES =====
+
+  /**
+   * Get a single desk by ID.
+   */
+  get: orgProcedure
+    .input(z.object({ deskId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const desk = await ctx.db.desk.findUnique({
+        where: { id: input.deskId },
+        include: { attributes: true, availabilityShifts: true },
+      });
+      if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found" });
+      return desk;
+    }),
+
+  /**
+   * List all desks on a floor.
+   */
+  listForFloor: orgProcedure
+    .input(z.object({ floorId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const desks = await ctx.db.desk.findMany({
+        where: { floorId: input.floorId },
+        include: { attributes: true },
+        orderBy: { number: "asc" },
+      });
+      return desks;
+    }),
+
   // ===== AVAILABILITY SHIFTS =====
 
   /**
