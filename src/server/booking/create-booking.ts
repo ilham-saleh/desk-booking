@@ -109,6 +109,106 @@ export async function createBooking(
     }
   }
 
+  // Validate occupant against desk restrictions for this day
+  if (subject.userId) {
+    const dayOfWeek = new Date(`${input.date}T00:00:00Z`).getUTCDay();
+
+    // Get applicable availability shifts for this day
+    const shifts = await ctx.db.availabilityShift.findMany({
+      where: {
+        deskId: desk.id,
+        isActive: true,
+        daysOfWeek: { has: dayOfWeek },
+      },
+      include: { restriction: { include: { rules: true } } },
+    });
+
+    // If no shifts defined, desk is not bookable on this day
+    if (shifts.length === 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "This desk is not available for booking on this day.",
+      });
+    }
+
+    // Check if occupant matches at least one shift's restriction
+    const occupant = await ctx.db.user.findUnique({ where: { id: subject.userId } });
+    if (!occupant) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Occupant user not found." });
+    }
+
+    let matchesAnyShift = false;
+    let mismatchReason = "";
+
+    for (const shift of shifts) {
+      // Check advance booking window for this shift
+      if (shift.advanceBookingWindowDays) {
+        const now = new Date();
+        const dayMillis = shift.advanceBookingWindowDays * 24 * 60 * 60 * 1000;
+        const maxBookingDate = new Date(now.getTime() + dayMillis);
+        if (startAt > maxBookingDate) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Bookings for this desk must be within ${shift.advanceBookingWindowDays} days in advance.`,
+          });
+        }
+      }
+
+      // Check restriction (if no restriction, anyone can book)
+      if (!shift.restriction || shift.restriction.rules.length === 0) {
+        matchesAnyShift = true;
+        break;
+      }
+
+      // Check if occupant matches this restriction
+      let shiftMatches = false;
+      for (const rule of shift.restriction.rules) {
+        const ruleValues = Array.isArray(rule.value) ? rule.value : [rule.value];
+        let ruleMatches = false;
+
+        switch (rule.fieldType) {
+          case "DEPARTMENT":
+            ruleMatches = ruleValues.includes(occupant.department || "");
+            break;
+          case "EMAIL":
+            ruleMatches = ruleValues.includes(occupant.email);
+            break;
+          case "USER":
+            ruleMatches = ruleValues.includes(occupant.id);
+            break;
+        }
+
+        // Apply operator
+        if (rule.operator.startsWith("IS_NOT")) {
+          ruleMatches = !ruleMatches;
+        }
+
+        // Currently OR logic within a shift
+        if (ruleMatches) {
+          shiftMatches = true;
+          break;
+        }
+      }
+
+      if (shiftMatches) {
+        matchesAnyShift = true;
+        break;
+      }
+
+      // Store reason for first non-matching shift
+      if (!mismatchReason) {
+        mismatchReason = `Restricted to ${shift.restriction.name} on this day.`;
+      }
+    }
+
+    if (!matchesAnyShift) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Not eligible to book this desk. ${mismatchReason}`,
+      });
+    }
+  }
+
   try {
     return await ctx.db.booking.create({
       data: {
