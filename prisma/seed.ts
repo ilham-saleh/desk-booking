@@ -89,18 +89,27 @@ async function main() {
     },
   });
 
-  const site =
-    (await db.site.findFirst({ where: { organizationId: org.id, name: "HQ" } })) ??
-    (await db.site.create({
-      data: {
-        organizationId: org.id,
-        name: "HQ",
-        address: "1 Example Street, London",
-        timeZone: "Europe/London",
-        operatingHoursStart: 420, // 07:00
-        operatingHoursEnd: 1080, // 18:00
-      },
-    }));
+  const site = await db.site.upsert({
+    where: { id: (await db.site.findFirst({ where: { organizationId: org.id, name: "HQ" } }))?.id ?? "nonexistent" },
+    update: {
+      city: "London",
+      country: "United Kingdom",
+      description: "Headquarters",
+      timeZone: "Europe/London",
+      allowEmployeeSeeBookings: true,
+    },
+    create: {
+      organizationId: org.id,
+      name: "HQ",
+      address: "1 Example Street, London",
+      city: "London",
+      country: "United Kingdom",
+      description: "Headquarters",
+      timeZone: "Europe/London",
+      operatingHoursStart: 420, // 07:00
+      operatingHoursEnd: 1080, // 18:00
+    },
+  });
 
   await db.permission.upsert({
     where: { userId_siteId: { userId: siteAdmin.id, siteId: site.id } },
@@ -113,6 +122,10 @@ async function main() {
   });
 
   const floors = await seedFloorPlans(org.id, site.id, orgSuperAdmin.id);
+
+  await seedDepartmentsAndRestrictions(org.id);
+  await seedAvailabilityShifts(org.id);
+  await seedOperatingHours(site.id, org.id);
 
   console.log("Seeded customer-zero:", {
     organization: org.slug,
@@ -204,6 +217,135 @@ async function seedFloorPlans(organizationId: string, siteId: string, createdByI
   }
 
   return floors;
+}
+
+/**
+ * Seeds departments and booking restrictions for the org.
+ */
+async function seedDepartmentsAndRestrictions(organizationId: string) {
+  const departments = ["Engineering", "Sales", "Editorial", "Finance", "Operations"];
+
+  for (const name of departments) {
+    await db.department.upsert({
+      where: { organizationId_name: { organizationId, name } },
+      update: {},
+      create: { organizationId, name },
+    });
+  }
+
+  // Create sample restrictions
+  const engineeringDept = await db.department.findUnique({
+    where: { organizationId_name: { organizationId, name: "Engineering" } },
+  });
+  const salesDept = await db.department.findUnique({
+    where: { organizationId_name: { organizationId, name: "Sales" } },
+  });
+
+  if (engineeringDept && salesDept) {
+    // "Engineering Only" restriction
+    await db.bookingRestriction.upsert({
+      where: { organizationId_name: { organizationId, name: "Engineering Only" } },
+      update: {},
+      create: {
+        organizationId,
+        name: "Engineering Only",
+        rules: {
+          create: [
+            {
+              fieldType: "DEPARTMENT",
+              operator: "IS_ANY_OF",
+              value: [engineeringDept.name],
+            },
+          ],
+        },
+      },
+    });
+
+    // "Sales Team" restriction
+    await db.bookingRestriction.upsert({
+      where: { organizationId_name: { organizationId, name: "Sales Team" } },
+      update: {},
+      create: {
+        organizationId,
+        name: "Sales Team",
+        rules: {
+          create: [
+            {
+              fieldType: "DEPARTMENT",
+              operator: "IS_ANY_OF",
+              value: [salesDept.name],
+            },
+          ],
+        },
+      },
+    });
+
+    // "Anyone" restriction (no rules = open to all)
+    await db.bookingRestriction.upsert({
+      where: { organizationId_name: { organizationId, name: "Anyone" } },
+      update: {},
+      create: {
+        organizationId,
+        name: "Anyone",
+      },
+    });
+  }
+}
+
+/**
+ * Seeds availability shifts for desks (e.g., desk is available Mon-Fri to all employees).
+ */
+async function seedAvailabilityShifts(organizationId: string) {
+  const desks = await db.desk.findMany({ where: { organizationId } });
+
+  const anyoneRestriction = await db.bookingRestriction.findFirst({
+    where: { organizationId, name: "Anyone" },
+  });
+
+  if (!anyoneRestriction) return;
+
+  // For now, create a simple "Weekday 9-5" shift for all desks (skip if already exists)
+  for (const desk of desks.slice(0, 5)) {
+    const existing = await db.availabilityShift.findFirst({
+      where: { deskId: desk.id, name: "Weekday 9-5" },
+    });
+
+    if (!existing) {
+      await db.availabilityShift.create({
+        data: {
+          organizationId,
+          deskId: desk.id,
+          restrictionId: anyoneRestriction.id,
+          name: "Weekday 9-5",
+          daysOfWeek: [1, 2, 3, 4, 5], // Mon-Fri
+          advanceBookingWindowDays: 30,
+          startTimeMinutes: 540, // 9:00
+          endTimeMinutes: 1020, // 17:00
+        },
+      });
+    }
+  }
+}
+
+/**
+ * Seeds site operating hours (per-day configuration).
+ */
+async function seedOperatingHours(siteId: string, organizationId: string) {
+  const weekdayHours = [
+    { dayOfWeek: 1, openAtMinutes: 420, closeAtMinutes: 1080 }, // Mon 7-18
+    { dayOfWeek: 2, openAtMinutes: 420, closeAtMinutes: 1080 }, // Tue 7-18
+    { dayOfWeek: 3, openAtMinutes: 420, closeAtMinutes: 1080 }, // Wed 7-18
+    { dayOfWeek: 4, openAtMinutes: 420, closeAtMinutes: 1080 }, // Thu 7-18
+    { dayOfWeek: 5, openAtMinutes: 420, closeAtMinutes: 1080 }, // Fri 7-18
+  ];
+
+  for (const { dayOfWeek, openAtMinutes, closeAtMinutes } of weekdayHours) {
+    await db.siteOperatingHours.upsert({
+      where: { siteId_dayOfWeek: { siteId, dayOfWeek } },
+      update: { openAtMinutes, closeAtMinutes },
+      create: { organizationId, siteId, dayOfWeek, openAtMinutes, closeAtMinutes },
+    });
+  }
 }
 
 main()
