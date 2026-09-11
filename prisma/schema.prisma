@@ -19,6 +19,7 @@ enum Role {
   PLATFORM_ADMIN
   ORG_SUPER_ADMIN
   SITE_ADMIN
+  BOOKING_MANAGER
   STANDARD_USER
 }
 
@@ -49,6 +50,29 @@ enum DeskState {
   INACTIVE
 }
 
+enum RestrictionFieldType {
+  DEPARTMENT
+  EMAIL
+  USER
+}
+
+enum RestrictionOperator {
+  IS
+  IS_NOT
+  IS_ANY_OF
+  IS_NOT_ANY_OF
+}
+
+enum DeskAssignmentMode {
+  BOOKABLE
+  ASSIGNED
+}
+
+enum UnitSystem {
+  METRIC
+  IMPERIAL
+}
+
 /// The tenant. Every other model belongs to exactly one Organization, except
 /// User — nullable there, and null only for PLATFORM_ADMIN (who belongs to no org).
 model Organization {
@@ -64,18 +88,23 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users             User[]
-  permissions       Permission[]
-  sites             Site[]
-  floors            Floor[]
-  floorPlanVersions FloorPlanVersion[]
-  desks             Desk[]
-  rooms             Room[]
-  utilities         Utility[]
-  bookings          Booking[]
-  deskWatches       DeskWatch[]
-  notifications     Notification[]
-  auditLogs         AuditLog[]
+  users                  User[]
+  permissions            Permission[]
+  sites                  Site[]
+  floors                 Floor[]
+  floorPlanVersions      FloorPlanVersion[]
+  desks                  Desk[]
+  rooms                  Room[]
+  utilities              Utility[]
+  bookings               Booking[]
+  deskWatches            DeskWatch[]
+  notifications          Notification[]
+  auditLogs              AuditLog[]
+  departments            Department[]
+  bookingRestrictions    BookingRestriction[]
+  availabilityShifts     AvailabilityShift[]
+  deskAttributes         DeskAttribute[]
+  siteOperatingHours     SiteOperatingHours[]
 
   @@map("organizations")
 }
@@ -87,7 +116,10 @@ model User {
   name           String
   role           Role
   department     String?
+  phone          String?
+  timezone       String?
   isActive       Boolean  @default(true)
+  lastLoginAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -102,6 +134,7 @@ model User {
   notifications            Notification[]
   auditLogs                AuditLog[]
   createdFloorPlanVersions FloorPlanVersion[]
+  assignedDesks            Desk[]             @relation("AssignedOccupant")
 
   @@unique([organizationId, email])
   @@map("users")
@@ -127,20 +160,27 @@ model Site {
   organizationId String
   name           String
   address        String?
+  city           String?
+  country        String?
+  postalCode     String?
+  description    String?
   timeZone       String
 
-  /// Minutes from local midnight, e.g. 420 = 07:00, 1080 = 18:00.
+  /// Deprecated: use SiteOperatingHours instead. Kept for backwards compatibility.
   operatingHoursStart Int @default(0)
   operatingHoursEnd   Int @default(1440)
 
-  photoUrl String?
+  photoUrl                    String?
+  unitSystem                  UnitSystem @default(METRIC)
+  allowEmployeeSeeBookings    Boolean    @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  floors       Floor[]
-  permissions  Permission[]
+  organization         Organization          @relation(fields: [organizationId], references: [id])
+  floors               Floor[]
+  permissions          Permission[]
+  operatingHours       SiteOperatingHours[]
 
   @@map("sites")
 }
@@ -196,24 +236,30 @@ model FloorPlanVersion {
 }
 
 model Desk {
-  id             String  @id @default(cuid())
-  organizationId String
-  floorId        String
-  number         String
-  name           String?
-  x              Float
-  y              Float
-  capacity       Int     @default(1)
-  isActive       Boolean @default(true)
-  requiresCheckIn Boolean @default(false)
+  id                String              @id @default(cuid())
+  organizationId    String
+  floorId           String
+  number            String
+  name              String?
+  x                 Float
+  y                 Float
+  capacity          Int                 @default(1)
+  isActive          Boolean             @default(true)
+  requiresCheckIn   Boolean             @default(false)
+  spaceType         String?
+  assignmentMode    DeskAssignmentMode  @default(BOOKABLE)
+  assignedOccupantId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  floor        Floor        @relation(fields: [floorId], references: [id])
-  bookings     Booking[]
-  deskWatches  DeskWatch[]
+  organization       Organization        @relation(fields: [organizationId], references: [id])
+  floor              Floor               @relation(fields: [floorId], references: [id])
+  assignedOccupant   User?               @relation("AssignedOccupant", fields: [assignedOccupantId], references: [id])
+  bookings           Booking[]
+  deskWatches        DeskWatch[]
+  availabilityShifts AvailabilityShift[]
+  attributes         DeskAttribute[]
 
   @@unique([floorId, number])
   @@map("desks")
@@ -259,19 +305,20 @@ model Utility {
 }
 
 model Booking {
-  id             String        @id @default(cuid())
-  organizationId String
-  deskId         String
-  userId         String? // null when booked for a guest (see guestName)
-  guestName      String?
-  bookedById     String // always set — who performed the booking (self, or admin-on-behalf)
-  date           DateTime      @db.Date // site-local calendar date, weekdays only
-  startAt        DateTime // UTC instant — rule 3
-  endAt          DateTime // UTC instant — rule 3
-  status         BookingStatus @default(CONFIRMED)
-  checkedInAt    DateTime?
-  cancelledAt    DateTime?
-  cancelledById  String?
+  id               String        @id @default(cuid())
+  organizationId   String
+  deskId           String
+  userId           String? // null when booked for a guest (see guestName)
+  guestName        String?
+  bookedById       String // always set — who performed the booking (self, or admin-on-behalf)
+  date             DateTime      @db.Date // site-local calendar date, weekdays only
+  startAt          DateTime // UTC instant — rule 3
+  endAt            DateTime // UTC instant — rule 3
+  status           BookingStatus @default(CONFIRMED)
+  checkedInAt      DateTime?
+  cancelledAt      DateTime?
+  cancelledById    String?
+  recurrenceRule   Json? // Future: for repeating bookings (RFC 5545 RRULE format, optional)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -331,4 +378,110 @@ model AuditLog {
   actor        User?        @relation(fields: [actorId], references: [id])
 
   @@map("audit_logs")
+}
+
+// Phase 4 — Admin & Workplace Management Entities
+
+model Department {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, name])
+  @@map("departments")
+}
+
+/// Reusable booking restriction rules — assigned to AvailabilityShifts.
+/// Example: "Editorial Only", "Credit & Equities Team", "Anyone".
+model BookingRestriction {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id])
+  rules          RestrictionRule[]
+  availabilityShifts AvailabilityShift[]
+
+  @@unique([organizationId, name])
+  @@map("booking_restrictions")
+}
+
+/// Individual rule within a BookingRestriction.
+/// Example rule 1: Department IS ANY OF [Editorial, Editorial-Forum]
+/// Example rule 2: Email IS ANY OF [user@example.com]
+/// Linked by AND/OR logic stored in parent restriction (future: add logic field to rule).
+model RestrictionRule {
+  id                    String                @id @default(cuid())
+  restrictionId         String
+  fieldType             RestrictionFieldType
+  operator              RestrictionOperator
+  value                 Json // array of strings or single string, depending on operator
+  createdAt             DateTime              @default(now())
+
+  restriction BookingRestriction @relation(fields: [restrictionId], references: [id], onDelete: Cascade)
+
+  @@map("restriction_rules")
+}
+
+/// Per-desk availability shift — defines when a desk is bookable and to whom.
+/// Example: Desk 5.52 on Mon/Wed is "Editorial Only", Tue/Thu is "Credit & Equities", Fri is "Anyone".
+model AvailabilityShift {
+  id                    String   @id @default(cuid())
+  organizationId        String
+  deskId                String
+  restrictionId         String?  // null = no restriction (anyone can book)
+  name                  String?
+  daysOfWeek            Int[] // 0–6 (Sun–Sat); usually [1,2,3,4,5] for weekdays
+  advanceBookingWindowDays Int?  // max days in advance user can book (e.g. 30)
+  startTimeMinutes      Int?     // optional per-shift start time (minutes from midnight)
+  endTimeMinutes        Int?     // optional per-shift end time
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  organization  Organization         @relation(fields: [organizationId], references: [id])
+  desk          Desk                 @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  restriction   BookingRestriction?  @relation(fields: [restrictionId], references: [id], onDelete: SetNull)
+
+  @@map("availability_shifts")
+}
+
+/// Desk attributes/features (e.g., standing desk, dual monitors, window seat).
+model DeskAttribute {
+  id             String   @id @default(cuid())
+  organizationId String
+  deskId         String
+  type           String   // e.g., "STANDING_DESK", "DUAL_MONITORS", "WINDOW_SEAT"
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  desk         Desk         @relation(fields: [deskId], references: [id], onDelete: Cascade)
+
+  @@unique([deskId, type])
+  @@map("desk_attributes")
+}
+
+/// Per-day operating hours for a site.
+/// Example: Monday 07:00–19:00, Tuesday 07:00–19:00, etc.
+model SiteOperatingHours {
+  id             String   @id @default(cuid())
+  organizationId String
+  siteId         String
+  dayOfWeek      Int      // 0–6 (Sun–Sat)
+  openAtMinutes  Int      // e.g. 420 = 07:00
+  closeAtMinutes Int      // e.g. 1140 = 19:00
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  site         Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, dayOfWeek])
+  @@map("site_operating_hours")
 }
