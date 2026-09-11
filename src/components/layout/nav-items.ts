@@ -37,5 +37,12 @@ function isAdminRole(role: Role): boolean {
 }
 
 export function getNavItems(role: Role): NavItem[] {
-  return isAdminRole(role) ? [...userNavItems, ...adminNavItems] : userNavItems;
+  // Admin roles (FACILITY_ADMIN/SITE_ADMIN, ORG_SUPER_ADMIN) see employee + admin nav
+  if (isAdminRole(role)) {
+    return [...userNavItems, ...adminNavItems];
+  }
+
+  // All other roles (BOOKING_MANAGER, STANDARD_USER) see employee nav only
+  // (BOOKING_MANAGER gets extended booking UI, not separate nav items)
+  return userNavItems;
 }

@@ -3,7 +3,7 @@ import superjson from "superjson";
 import { flattenError, ZodError } from "zod";
 
 import { auth } from "@/server/auth";
-import { isOrgSuperAdmin, isPlatformAdmin, isSiteAdminRole, type Session } from "@/server/auth/roles";
+import { isOrgSuperAdmin, isPlatformAdmin, isSiteAdminRole, isBookingManagerRole, type Session } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getScopedDb, type ScopedDb } from "@/server/tenancy";
 
@@ -83,7 +83,25 @@ export const platformAdminProcedure = protectedProcedure.use(({ ctx, next }) => 
   return next({ ctx });
 });
 
-/** Call inside a siteAdminProcedure handler once the target siteId is known. */
+/**
+ * Requires SITE_ADMIN or ORG_SUPER_ADMIN — alias for Phase 4 naming.
+ * (SITE_ADMIN is renamed FACILITY_ADMIN in Phase 4 spec, but kept for backwards compat.)
+ */
+export const facilityAdminProcedure = siteAdminProcedure;
+
+/**
+ * Requires BOOKING_MANAGER or higher (FACILITY_ADMIN, ORG_SUPER_ADMIN).
+ * Used for booking delegation and management.
+ */
+export const bookingManagerProcedure = orgProcedure.use(({ ctx, next }) => {
+  const isManager = isBookingManagerRole(ctx.session) || isSiteAdminRole(ctx.session) || isOrgSuperAdmin(ctx.session);
+  if (!isManager) {
+    throw new TRPCError({ code: "FORBIDDEN" });
+  }
+  return next({ ctx });
+});
+
+/** Call inside a siteAdminProcedure/facilityAdminProcedure handler once the target siteId is known. */
 export async function assertSiteAdmin(
   ctx: { db: ScopedDb; session: Session },
   siteId: string,
@@ -96,4 +114,12 @@ export async function assertSiteAdmin(
   if (!permission) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
+}
+
+/** Alias for Phase 4 naming; calls assertSiteAdmin. */
+export async function assertFacilityAdmin(
+  ctx: { db: ScopedDb; session: Session },
+  siteId: string,
+): Promise<void> {
+  return assertSiteAdmin(ctx, siteId);
 }
