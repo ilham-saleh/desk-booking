@@ -36,10 +36,10 @@ export function FloorPlanUpload({ floorId, floorName, onUploadSuccess }: FloorPl
     const file = files.item(0);
     if (!file) return;
 
-    const validTypes = ["application/pdf", "image/png", "image/jpeg"];
+    const validTypes = ["image/png", "image/jpeg"];
 
     if (!validTypes.includes(file.type)) {
-      toast.error("Please upload a PDF or image file (PNG/JPG)");
+      toast.error("Please upload a PNG or JPG image file");
       return;
     }
 
@@ -98,12 +98,12 @@ export function FloorPlanUpload({ floorId, floorName, onUploadSuccess }: FloorPl
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.png,.jpg,.jpeg"
+            accept=".png,.jpg,.jpeg"
             onChange={(e) => handleFileUpload(e.target.files)}
             hidden
             disabled={isUploading}
           />
-          <p className="text-xs text-gray-500 mt-4">PDF, PNG or JPG</p>
+          <p className="text-xs text-gray-500 mt-4">PNG or JPG images only</p>
         </div>
       </CardContent>
     </Card>

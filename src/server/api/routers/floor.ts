@@ -377,6 +377,15 @@ export const floorRouter = createTRPCRouter({
 
       await assertSiteAdmin(ctx, floor.siteId);
 
+      // Only support image uploads for now (PNG, JPG)
+      const isImage = ["image/png", "image/jpeg"].includes(input.mimeType);
+      if (!isImage) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Only PNG and JPG images are supported. PDF support coming soon.",
+        });
+      }
+
       // Get or create draft
       let draft = await ctx.db.floorPlanVersion.findFirst({
         where: { floorId: input.floorId, status: "DRAFT" },
@@ -397,42 +406,16 @@ export const floorRouter = createTRPCRouter({
       // Convert array back to Buffer
       const fileBuffer = Buffer.from(input.fileData);
 
-      // Determine file type and process
-      const isPdf = input.mimeType === "application/pdf" || input.fileName.endsWith(".pdf");
-      let renderedBuffer: Buffer;
-      let imageWidth: number;
-      let imageHeight: number;
-      const ext: "pdf" | "png" = isPdf ? "pdf" : "png";
+      // For images, use directly as rendered image
+      const renderedBuffer = fileBuffer;
+      const imageWidth = 1200;
+      const imageHeight = 800;
 
-      try {
-        if (isPdf) {
-          const { renderPdfFirstPageToPng } = await import("@/server/storage/render-pdf");
-          const rendered = await renderPdfFirstPageToPng(new Uint8Array(fileBuffer));
-          renderedBuffer = rendered.png;
-          imageWidth = rendered.width;
-          imageHeight = rendered.height;
-        } else {
-          renderedBuffer = fileBuffer;
-          // For images, estimate dimensions (ideally should use image library)
-          imageWidth = 1200;
-          imageHeight = 800;
-        }
-      } catch (err) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `Failed to process floor plan: ${err instanceof Error ? err.message : "Unknown error"}`,
-        });
-      }
-
-      // Store files
-      const sourceKey = floorPlanKey(ctx.organizationId, input.floorId, draft.id, ext);
+      // Store the image
       const renderedKey = floorPlanKey(ctx.organizationId, input.floorId, draft.id, "png");
 
       try {
-        if (isPdf) {
-          await storage.putObject(sourceKey, fileBuffer, input.mimeType);
-        }
-        await storage.putObject(renderedKey, renderedBuffer, "image/png");
+        await storage.putObject(renderedKey, renderedBuffer, input.mimeType);
       } catch (err) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -444,7 +427,7 @@ export const floorRouter = createTRPCRouter({
       const updated = await ctx.db.floorPlanVersion.update({
         where: { id: draft.id },
         data: {
-          sourceFileKey: sourceKey,
+          sourceFileKey: renderedKey,
           renderedImageKey: renderedKey,
           imageWidth,
           imageHeight,
