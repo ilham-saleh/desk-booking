@@ -12,6 +12,8 @@ import {
   floorPlanUploadInputSchema,
   type FloorPlanUploadInput
 } from "@/lib/schemas/floor";
+import { storage, floorPlanKey } from "@/server/storage";
+import { renderPdfFirstPageToPng } from "@/server/storage/render-pdf";
 
 // Re-export for backward compatibility
 export { floorCreateInputSchema, type FloorCreateInput, floorUpdateInputSchema, type FloorUpdateInput, floorPlanUploadInputSchema, type FloorPlanUploadInput };
@@ -351,5 +353,113 @@ export const floorRouter = createTRPCRouter({
         orderBy: { publishedAt: "desc" },
       });
       return versions;
+    }),
+
+  /**
+   * Upload a floor plan (PDF or image) and store it.
+   * Converts PDFs to PNG for canvas background.
+   * FACILITY_ADMIN or higher.
+   */
+  uploadFloorPlan: siteAdminProcedure
+    .input(
+      z.object({
+        floorId: z.string().min(1),
+        fileName: z.string().min(1),
+        fileBuffer: z.instanceof(Buffer),
+        mimeType: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const floor = await ctx.db.floor.findUnique({
+        where: { id: input.floorId },
+        include: { site: true },
+      });
+      if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+
+      await assertSiteAdmin(ctx, floor.siteId);
+
+      // Get or create draft
+      let draft = await ctx.db.floorPlanVersion.findFirst({
+        where: { floorId: input.floorId, status: "DRAFT" },
+      });
+
+      if (!draft) {
+        draft = await ctx.db.floorPlanVersion.create({
+          data: {
+            organizationId: ctx.organizationId,
+            floorId: input.floorId,
+            status: "DRAFT",
+            sourceFileKey: "",
+            createdById: ctx.session.user.id,
+          },
+        });
+      }
+
+      // Determine file type and process
+      const isPdf = input.mimeType === "application/pdf" || input.fileName.endsWith(".pdf");
+      let renderedBuffer: Buffer;
+      let imageWidth: number;
+      let imageHeight: number;
+      const ext: "pdf" | "png" = isPdf ? "pdf" : "png";
+
+      try {
+        if (isPdf) {
+          const rendered = await renderPdfFirstPageToPng(new Uint8Array(input.fileBuffer));
+          renderedBuffer = rendered.png;
+          imageWidth = rendered.width;
+          imageHeight = rendered.height;
+        } else {
+          renderedBuffer = input.fileBuffer;
+          // For images, estimate dimensions (ideally should use image library)
+          imageWidth = 1200;
+          imageHeight = 800;
+        }
+      } catch (err) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to process floor plan: ${err instanceof Error ? err.message : "Unknown error"}`,
+        });
+      }
+
+      // Store files
+      const sourceKey = floorPlanKey(ctx.organizationId, input.floorId, draft.id, ext);
+      const renderedKey = floorPlanKey(ctx.organizationId, input.floorId, draft.id, "png");
+
+      try {
+        if (isPdf) {
+          await storage.putObject(sourceKey, input.fileBuffer, input.mimeType);
+        }
+        await storage.putObject(renderedKey, renderedBuffer, "image/png");
+      } catch (err) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to store floor plan: ${err instanceof Error ? err.message : "Unknown error"}`,
+        });
+      }
+
+      // Update draft with file references
+      const updated = await ctx.db.floorPlanVersion.update({
+        where: { id: draft.id },
+        data: {
+          sourceFileKey: sourceKey,
+          renderedImageKey: renderedKey,
+          imageWidth,
+          imageHeight,
+        },
+      });
+
+      // Audit log
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "UPLOAD",
+          targetType: "FloorPlan",
+          targetId: input.floorId,
+          after: { fileName: input.fileName, size: input.fileBuffer.length },
+        },
+      });
+
+      return updated;
     }),
 });
