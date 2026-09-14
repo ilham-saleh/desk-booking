@@ -18,12 +18,30 @@ interface DeskObject {
   y: number;
 }
 
+interface UtilityObject {
+  id: string;
+  type: string;
+  label?: string | null;
+  x: number;
+  y: number;
+}
+
+interface RoomObject {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface FloorCanvasEditorProps {
   floorId: string;
   floorName: string;
   backgroundImageUrl?: string;
   imageWidth?: number;
   imageHeight?: number;
+  activeObjectType?: "desks" | "utilities" | "rooms" | null;
 }
 
 export function FloorCanvasEditor({
@@ -32,20 +50,30 @@ export function FloorCanvasEditor({
   backgroundImageUrl,
   imageWidth = 1200,
   imageHeight = 800,
+  activeObjectType = null,
 }: FloorCanvasEditorProps) {
   const [desks, setDesks] = useState<DeskObject[]>(() => []);
+  const [utilities, setUtilities] = useState<UtilityObject[]>(() => []);
+  const [rooms, setRooms] = useState<RoomObject[]>(() => []);
   const [selectedDeskId, setSelectedDeskId] = useState<string | null>(null);
+  const [selectedUtilityId, setSelectedUtilityId] = useState<string | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [newDeskNumber, setNewDeskNumber] = useState("");
+  const [newUtilityType, setNewUtilityType] = useState("");
+  const [newUtilityLabel, setNewUtilityLabel] = useState("");
+  const [newRoomName, setNewRoomName] = useState("");
   const [stageScale, setStageScale] = useState(1);
   const stageRef = useRef<Konva.Stage>(null);
   const layerRef = useRef<Konva.Layer>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  // Load existing desks
+  // Load existing desks, utilities, and rooms
   const { data: existingDesks = [] } = api.desk.listForFloor.useQuery({ floorId });
+  const { data: existingUtilities = [] } = api.floor.listUtilities.useQuery({ floorId });
+  const { data: existingRooms = [] } = api.floor.listRooms.useQuery({ floorId });
 
-  // Initialize desks from database
+  // Initialize desks, utilities, and rooms from database
   useEffect(() => {
     if (existingDesks.length > 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -60,6 +88,37 @@ export function FloorCanvasEditor({
       );
     }
   }, [existingDesks]);
+
+  useEffect(() => {
+    if (existingUtilities.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUtilities(
+        existingUtilities.map((u) => ({
+          id: u.id,
+          type: u.type,
+          label: u.label,
+          x: u.x,
+          y: u.y,
+        })),
+      );
+    }
+  }, [existingUtilities]);
+
+  useEffect(() => {
+    if (existingRooms.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRooms(
+        existingRooms.map((r) => ({
+          id: r.id,
+          name: r.name,
+          x: r.x,
+          y: r.y,
+          width: r.width,
+          height: r.height,
+        })),
+      );
+    }
+  }, [existingRooms]);
 
   const [konvaImage, setKonvaImage] = useState<Konva.Image | null>(null);
 
@@ -110,6 +169,66 @@ export function FloorCanvasEditor({
       setDesks((prev) => prev.filter((d) => d.id !== selectedDeskId));
       setSelectedDeskId(null);
       toast.success("Desk deleted");
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const createUtilityMutation = api.floor.createUtility.useMutation({
+    onSuccess: (newUtility) => {
+      setUtilities((prev) => [...prev, {
+        id: newUtility.id,
+        type: newUtility.type,
+        label: newUtility.label,
+        x: newUtility.x,
+        y: newUtility.y,
+      }]);
+      toast.success(`Utility ${newUtility.type} created`);
+      setNewUtilityType("");
+      setNewUtilityLabel("");
+      setIsCreating(false);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const deleteUtilityMutation = api.floor.deleteUtility.useMutation({
+    onSuccess: () => {
+      setUtilities((prev) => prev.filter((u) => u.id !== selectedUtilityId));
+      setSelectedUtilityId(null);
+      toast.success("Utility deleted");
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const createRoomMutation = api.floor.createRoom.useMutation({
+    onSuccess: (newRoom) => {
+      setRooms((prev) => [...prev, {
+        id: newRoom.id,
+        name: newRoom.name,
+        x: newRoom.x,
+        y: newRoom.y,
+        width: newRoom.width,
+        height: newRoom.height,
+      }]);
+      toast.success(`Room ${newRoom.name} created`);
+      setNewRoomName("");
+      setIsCreating(false);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const deleteRoomMutation = api.floor.deleteRoom.useMutation({
+    onSuccess: () => {
+      setRooms((prev) => prev.filter((r) => r.id !== selectedRoomId));
+      setSelectedRoomId(null);
+      toast.success("Room deleted");
     },
     onError: (err) => {
       toast.error(err.message);
@@ -169,7 +288,60 @@ export function FloorCanvasEditor({
     }
   };
 
+  const handleCreateUtility = () => {
+    if (!newUtilityType.trim()) {
+      toast.error("Utility type required");
+      return;
+    }
+
+    const centerX = stageRef.current?.width() ? stageRef.current.width() / 2 : 600;
+    const centerY = stageRef.current?.height() ? stageRef.current.height() / 2 : 400;
+
+    createUtilityMutation.mutate({
+      floorId,
+      type: newUtilityType,
+      label: newUtilityLabel || undefined,
+      x: centerX,
+      y: centerY,
+    });
+  };
+
+  const handleDeleteUtility = () => {
+    if (!selectedUtilityId) return;
+    if (confirm("Delete this utility?")) {
+      deleteUtilityMutation.mutate({ utilityId: selectedUtilityId });
+    }
+  };
+
+  const handleCreateRoom = () => {
+    if (!newRoomName.trim()) {
+      toast.error("Room name required");
+      return;
+    }
+
+    const centerX = stageRef.current?.width() ? stageRef.current.width() / 2 : 600;
+    const centerY = stageRef.current?.height() ? stageRef.current.height() / 2 : 400;
+
+    createRoomMutation.mutate({
+      floorId,
+      name: newRoomName,
+      x: centerX,
+      y: centerY,
+      width: 100,
+      height: 100,
+    });
+  };
+
+  const handleDeleteRoom = () => {
+    if (!selectedRoomId) return;
+    if (confirm("Delete this room?")) {
+      deleteRoomMutation.mutate({ roomId: selectedRoomId });
+    }
+  };
+
   const selectedDesk = selectedDeskId ? desks.find((d) => d.id === selectedDeskId) : null;
+  const selectedUtility = selectedUtilityId ? utilities.find((u) => u.id === selectedUtilityId) : null;
+  const selectedRoom = selectedRoomId ? rooms.find((r) => r.id === selectedRoomId) : null;
 
   return (
     <div className="space-y-4">
@@ -180,19 +352,36 @@ export function FloorCanvasEditor({
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Canvas Controls */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button
               size="sm"
-              onClick={() => setIsCreating(!isCreating)}
+              onClick={() => {
+                setIsCreating(!isCreating);
+                setNewDeskNumber("");
+                setNewUtilityType("");
+                setNewRoomName("");
+              }}
               variant={isCreating ? "default" : "outline"}
             >
               <Plus className="size-4 mr-2" />
-              {isCreating ? "Creating..." : "Create Desk"}
+              {isCreating ? "Cancel" : "Create"}
             </Button>
-            {selectedDesk && (
+            {activeObjectType === "desks" && selectedDesk && (
               <Button size="sm" variant="destructive" onClick={handleDeleteDesk}>
                 <Trash2 className="size-4 mr-2" />
-                Delete
+                Delete Desk
+              </Button>
+            )}
+            {activeObjectType === "utilities" && selectedUtility && (
+              <Button size="sm" variant="destructive" onClick={handleDeleteUtility}>
+                <Trash2 className="size-4 mr-2" />
+                Delete Utility
+              </Button>
+            )}
+            {activeObjectType === "rooms" && selectedRoom && (
+              <Button size="sm" variant="destructive" onClick={handleDeleteRoom}>
+                <Trash2 className="size-4 mr-2" />
+                Delete Room
               </Button>
             )}
             <Button
@@ -209,8 +398,8 @@ export function FloorCanvasEditor({
             </Button>
           </div>
 
-          {/* Creation Input */}
-          {isCreating && (
+          {/* Creation Input - Desks */}
+          {isCreating && activeObjectType === "desks" && (
             <div className="flex gap-2">
               <Input
                 placeholder="Desk number (e.g., 5.01)"
@@ -221,6 +410,39 @@ export function FloorCanvasEditor({
                 }}
               />
               <Button size="sm" onClick={handleCreateDesk} disabled={createDeskMutation.isPending}>
+                Create
+              </Button>
+            </div>
+          )}
+
+          {/* Creation Input - Utilities */}
+          {isCreating && activeObjectType === "utilities" && (
+            <div className="flex gap-2">
+              <Input
+                placeholder="Utility type (printer, kitchen, etc.)"
+                value={newUtilityType}
+                onChange={(e) => setNewUtilityType(e.target.value)}
+              />
+              <Input
+                placeholder="Label (optional)"
+                value={newUtilityLabel}
+                onChange={(e) => setNewUtilityLabel(e.target.value)}
+              />
+              <Button size="sm" onClick={handleCreateUtility} disabled={createUtilityMutation.isPending}>
+                Create
+              </Button>
+            </div>
+          )}
+
+          {/* Creation Input - Rooms */}
+          {isCreating && activeObjectType === "rooms" && (
+            <div className="flex gap-2">
+              <Input
+                placeholder="Room name (e.g., Meeting Room A)"
+                value={newRoomName}
+                onChange={(e) => setNewRoomName(e.target.value)}
+              />
+              <Button size="sm" onClick={handleCreateRoom} disabled={createRoomMutation.isPending}>
                 Create
               </Button>
             </div>
@@ -302,13 +524,89 @@ export function FloorCanvasEditor({
                     />
                   </Group>
                 ))}
+
+                {/* Utilities */}
+                {utilities.map((utility) => (
+                  <Group
+                    key={utility.id}
+                    x={utility.x}
+                    y={utility.y}
+                    onClick={(e) => {
+                      e.cancelBubble = true;
+                      setSelectedUtilityId(utility.id);
+                    }}
+                    draggable
+                    cursor="move"
+                  >
+                    <Rect
+                      width={40}
+                      height={40}
+                      fill={selectedUtility?.id === utility.id ? "#f59e0b" : "#ec4899"}
+                      stroke={selectedUtility?.id === utility.id ? "#d97706" : "#be185d"}
+                      strokeWidth={2}
+                      cornerRadius={2}
+                    />
+                    <Text
+                      text={utility.type[0]?.toUpperCase() ?? "U"}
+                      fontSize={10}
+                      fill="white"
+                      width={40}
+                      height={40}
+                      align="center"
+                      verticalAlign="middle"
+                      fontStyle="bold"
+                    />
+                  </Group>
+                ))}
+
+                {/* Rooms */}
+                {rooms.map((room) => (
+                  <Group
+                    key={room.id}
+                    x={room.x}
+                    y={room.y}
+                    onClick={(e) => {
+                      e.cancelBubble = true;
+                      setSelectedRoomId(room.id);
+                    }}
+                    draggable
+                    cursor="move"
+                  >
+                    <Rect
+                      width={room.width}
+                      height={room.height}
+                      fill={selectedRoom?.id === room.id ? "#8b5cf6" : "#6366f1"}
+                      stroke={selectedRoom?.id === room.id ? "#7c3aed" : "#4f46e5"}
+                      strokeWidth={2}
+                      opacity={0.6}
+                    />
+                    <Text
+                      text={room.name}
+                      fontSize={12}
+                      fill="white"
+                      width={room.width}
+                      height={room.height}
+                      align="center"
+                      verticalAlign="middle"
+                      fontStyle="bold"
+                    />
+                  </Group>
+                ))}
               </Layer>
             </Stage>
           </div>
 
-          {/* Desk Count */}
-          <div className="text-sm text-gray-600">
-            Total desks: <strong>{desks.length}</strong>
+          {/* Object Count */}
+          <div className="text-sm text-gray-600 flex gap-4">
+            <div>
+              Total desks: <strong>{desks.length}</strong>
+            </div>
+            <div>
+              Total utilities: <strong>{utilities.length}</strong>
+            </div>
+            <div>
+              Total rooms: <strong>{rooms.length}</strong>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -339,6 +637,62 @@ export function FloorCanvasEditor({
             <div className="pt-2">
               <p className="text-xs text-gray-500">Drag the desk to reposition it on the floor plan.</p>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Selected Utility Properties */}
+      {selectedUtility && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Utility Properties</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <dl className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <dt className="font-medium text-gray-600">Type</dt>
+                <dd>{selectedUtility.type}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-gray-600">Label</dt>
+                <dd>{selectedUtility.label || "—"}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-gray-600">Position (X, Y)</dt>
+                <dd>
+                  {selectedUtility.x.toFixed(0)}, {selectedUtility.y.toFixed(0)}
+                </dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Selected Room Properties */}
+      {selectedRoom && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Room Properties</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <dl className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <dt className="font-medium text-gray-600">Name</dt>
+                <dd>{selectedRoom.name}</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-gray-600">Position (X, Y)</dt>
+                <dd>
+                  {selectedRoom.x.toFixed(0)}, {selectedRoom.y.toFixed(0)}
+                </dd>
+              </div>
+              <div>
+                <dt className="font-medium text-gray-600">Size (W × H)</dt>
+                <dd>
+                  {selectedRoom.width.toFixed(0)} × {selectedRoom.height.toFixed(0)}
+                </dd>
+              </div>
+            </dl>
           </CardContent>
         </Card>
       )}

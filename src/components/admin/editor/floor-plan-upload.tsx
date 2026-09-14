@@ -46,11 +46,12 @@ export function FloorPlanUpload({ floorId, floorName, onUploadSuccess }: FloorPl
     setIsUploading(true);
 
     const processFile = async () => {
-      const buffer = await file.arrayBuffer();
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
       uploadMutation.mutate({
         floorId,
         fileName: file.name,
-        fileBuffer: Buffer.from(buffer),
+        fileData: Array.from(uint8Array),
         mimeType: file.type,
       });
     };

@@ -10,9 +10,12 @@ import { EditorLayout } from "@/components/admin/editor/editor-layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+type ObjectType = "desks" | "utilities" | "rooms" | null;
+
 export default function AdminEditorPage() {
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
+  const [activeObjectType, setActiveObjectType] = useState<ObjectType>(null);
 
   const { data: sites } = api.facility.list.useQuery();
   const { data: floors = [] } = api.floor.listForSite.useQuery(
@@ -105,7 +108,12 @@ export default function AdminEditorPage() {
   }
 
   return (
-    <EditorLayout floorName={selectedFloor.name}>
+    <EditorLayout
+      floorName={selectedFloor.name}
+      activeObjectType={activeObjectType}
+      onObjectTypeChange={setActiveObjectType}
+      onActionChange={() => {}}
+    >
       <div className="flex flex-col gap-4 p-4 overflow-auto">
         {/* Floor Selection & Controls */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -178,6 +186,7 @@ export default function AdminEditorPage() {
             backgroundImageUrl={draftPlan.renderedImageKey ? `/api/files/${draftPlan.renderedImageKey}` : undefined}
             imageWidth={draftPlan.imageWidth || 1200}
             imageHeight={draftPlan.imageHeight || 800}
+            activeObjectType={activeObjectType}
           />
         ) : (
           <Card>

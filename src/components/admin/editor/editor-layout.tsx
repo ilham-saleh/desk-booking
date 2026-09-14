@@ -15,22 +15,31 @@ import {
   Home,
 } from "lucide-react";
 
+type ObjectType = "desks" | "utilities" | "rooms" | null;
+type ActionType = "create" | "edit" | "delete" | null;
+type EditorTab = "multi-select" | "seats" | "utilities" | "neighbourhoods" | "rooms";
+
 interface EditorLayoutProps {
   floorName: string;
   children: React.ReactNode;
+  activeObjectType?: ObjectType;
+  onObjectTypeChange?: (type: ObjectType) => void;
+  activeAction?: ActionType;
+  onActionChange?: (action: ActionType) => void;
 }
-
-type EditorTab = "multi-select" | "seats" | "utilities" | "neighbourhoods" | "rooms";
-type SeatAction = "create" | "edit" | "reposition" | "delete";
 
 export function EditorLayout({
   floorName,
   children,
+  activeObjectType = null,
+  onObjectTypeChange,
+  activeAction = null,
+  onActionChange,
 }: EditorLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<EditorTab>("multi-select");
   const [showEditorMenu, setShowEditorMenu] = useState(false);
-  const [activeSeatAction, setActiveSeatAction] = useState<SeatAction | null>(null);
+  // activeAction is used in the JSX for conditional styling
 
   return (
     <div className="flex h-full bg-gray-50">
@@ -117,34 +126,35 @@ export function EditorLayout({
                             <p className="text-xs font-semibold text-gray-600 px-2">Seats</p>
                             <div className="space-y-1">
                               <Button
-                                variant={activeSeatAction === "create" ? "default" : "ghost"}
+                                variant={activeObjectType === "desks" && activeAction === "create" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
-                                onClick={() => setActiveSeatAction("create")}
+                                onClick={() => {
+                                  onObjectTypeChange?.("desks");
+                                  onActionChange?.("create");
+                                }}
                               >
                                 <Plus className="h-3 w-3 mr-2" /> Create
                               </Button>
                               <Button
-                                variant={activeSeatAction === "edit" ? "default" : "ghost"}
+                                variant={activeObjectType === "desks" && activeAction === "edit" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
-                                onClick={() => setActiveSeatAction("edit")}
+                                onClick={() => {
+                                  onObjectTypeChange?.("desks");
+                                  onActionChange?.("edit");
+                                }}
                               >
                                 <Edit2 className="h-3 w-3 mr-2" /> Edit
                               </Button>
                               <Button
-                                variant={activeSeatAction === "reposition" ? "default" : "ghost"}
+                                variant={activeObjectType === "desks" && activeAction === "delete" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
-                                onClick={() => setActiveSeatAction("reposition")}
-                              >
-                                <MousePointer2 className="h-3 w-3 mr-2" /> Reposition
-                              </Button>
-                              <Button
-                                variant={activeSeatAction === "delete" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => setActiveSeatAction("delete")}
+                                onClick={() => {
+                                  onObjectTypeChange?.("desks");
+                                  onActionChange?.("delete");
+                                }}
                               >
                                 <Trash2 className="h-3 w-3 mr-2" /> Delete
                               </Button>
@@ -156,23 +166,35 @@ export function EditorLayout({
                             <p className="text-xs font-semibold text-gray-600 px-2">Utilities</p>
                             <div className="space-y-1">
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "utilities" && activeAction === "create" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("utilities");
+                                  onActionChange?.("create");
+                                }}
                               >
                                 <Plus className="h-3 w-3 mr-2" /> Create
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "utilities" && activeAction === "edit" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("utilities");
+                                  onActionChange?.("edit");
+                                }}
                               >
                                 <Edit2 className="h-3 w-3 mr-2" /> Edit
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "utilities" && activeAction === "delete" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("utilities");
+                                  onActionChange?.("delete");
+                                }}
                               >
                                 <Trash2 className="h-3 w-3 mr-2" /> Delete
                               </Button>
@@ -216,23 +238,35 @@ export function EditorLayout({
                             </p>
                             <div className="space-y-1">
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "rooms" && activeAction === "create" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("rooms");
+                                  onActionChange?.("create");
+                                }}
                               >
                                 <Home className="h-3 w-3 mr-2" /> Create
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "rooms" && activeAction === "edit" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("rooms");
+                                  onActionChange?.("edit");
+                                }}
                               >
                                 <Edit2 className="h-3 w-3 mr-2" /> Edit
                               </Button>
                               <Button
-                                variant="ghost"
+                                variant={activeObjectType === "rooms" && activeAction === "delete" ? "default" : "ghost"}
                                 size="sm"
                                 className="w-full justify-start text-xs"
+                                onClick={() => {
+                                  onObjectTypeChange?.("rooms");
+                                  onActionChange?.("delete");
+                                }}
                               >
                                 <Trash2 className="h-3 w-3 mr-2" /> Delete
                               </Button>

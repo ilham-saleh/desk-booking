@@ -1,4 +1,5 @@
-import { createCanvas } from "@napi-rs/canvas";
+import "server-only";
+
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import path from "path";
 
@@ -7,6 +8,15 @@ export interface RenderedPdfPage {
   width: number;
   height: number;
 }
+
+let canvasModule: typeof import("@napi-rs/canvas") | null = null;
+
+const loadCanvasModule = async () => {
+  if (canvasModule === null) {
+    canvasModule = await import("@napi-rs/canvas");
+  }
+  return canvasModule;
+};
 
 // Configure pdfjs worker source for server-side rendering
 const initializePdfjsWorker = () => {
@@ -35,6 +45,7 @@ initializePdfjsWorker();
  */
 export async function renderPdfFirstPageToPng(pdfBytes: Uint8Array, scale = 2): Promise<RenderedPdfPage> {
   try {
+    const canvas = await loadCanvasModule();
     const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
     const doc = await loadingTask.promise;
     const page = await doc.getPage(1);
@@ -42,22 +53,22 @@ export async function renderPdfFirstPageToPng(pdfBytes: Uint8Array, scale = 2): 
     const width = Math.ceil(viewport.width);
     const height = Math.ceil(viewport.height);
 
-    const canvas = createCanvas(width, height);
-    const context = canvas.getContext("2d");
+    const canvasObj = canvas.createCanvas(width, height);
+    const context = canvasObj.getContext("2d");
 
     if (!context) {
       throw new Error("Failed to get canvas 2D context");
     }
 
     await page.render({
-      canvas: canvas as unknown as HTMLCanvasElement,
+      canvas: canvasObj as unknown as HTMLCanvasElement,
       canvasContext: context as unknown as CanvasRenderingContext2D,
       viewport,
     }).promise;
 
     await loadingTask.destroy();
 
-    return { png: canvas.toBuffer("image/png"), width, height };
+    return { png: canvasObj.toBuffer("image/png"), width, height };
   } catch (err) {
     throw new Error(
       `PDF rendering failed: ${err instanceof Error ? err.message : "Unknown error"}. ` +

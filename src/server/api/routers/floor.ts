@@ -13,7 +13,6 @@ import {
   type FloorPlanUploadInput
 } from "@/lib/schemas/floor";
 import { storage, floorPlanKey } from "@/server/storage";
-import { renderPdfFirstPageToPng } from "@/server/storage/render-pdf";
 
 // Re-export for backward compatibility
 export { floorCreateInputSchema, type FloorCreateInput, floorUpdateInputSchema, type FloorUpdateInput, floorPlanUploadInputSchema, type FloorPlanUploadInput };
@@ -365,7 +364,7 @@ export const floorRouter = createTRPCRouter({
       z.object({
         floorId: z.string().min(1),
         fileName: z.string().min(1),
-        fileBuffer: z.instanceof(Buffer),
+        fileData: z.array(z.number().int().min(0).max(255)),
         mimeType: z.string(),
       }),
     )
@@ -395,6 +394,9 @@ export const floorRouter = createTRPCRouter({
         });
       }
 
+      // Convert array back to Buffer
+      const fileBuffer = Buffer.from(input.fileData);
+
       // Determine file type and process
       const isPdf = input.mimeType === "application/pdf" || input.fileName.endsWith(".pdf");
       let renderedBuffer: Buffer;
@@ -404,12 +406,13 @@ export const floorRouter = createTRPCRouter({
 
       try {
         if (isPdf) {
-          const rendered = await renderPdfFirstPageToPng(new Uint8Array(input.fileBuffer));
+          const { renderPdfFirstPageToPng } = await import("@/server/storage/render-pdf");
+          const rendered = await renderPdfFirstPageToPng(new Uint8Array(fileBuffer));
           renderedBuffer = rendered.png;
           imageWidth = rendered.width;
           imageHeight = rendered.height;
         } else {
-          renderedBuffer = input.fileBuffer;
+          renderedBuffer = fileBuffer;
           // For images, estimate dimensions (ideally should use image library)
           imageWidth = 1200;
           imageHeight = 800;
@@ -427,7 +430,7 @@ export const floorRouter = createTRPCRouter({
 
       try {
         if (isPdf) {
-          await storage.putObject(sourceKey, input.fileBuffer, input.mimeType);
+          await storage.putObject(sourceKey, fileBuffer, input.mimeType);
         }
         await storage.putObject(renderedKey, renderedBuffer, "image/png");
       } catch (err) {
@@ -456,10 +459,294 @@ export const floorRouter = createTRPCRouter({
           action: "UPLOAD",
           targetType: "FloorPlan",
           targetId: input.floorId,
-          after: { fileName: input.fileName, size: input.fileBuffer.length },
+          after: { fileName: input.fileName, size: fileBuffer.length },
         },
       });
 
       return updated;
+    }),
+
+  // ===== UTILITIES =====
+
+  /**
+   * List all utilities on a floor.
+   */
+  listUtilities: orgProcedure
+    .input(z.object({ floorId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const utilities = await ctx.db.utility.findMany({
+        where: { floorId: input.floorId },
+        orderBy: { createdAt: "asc" },
+      });
+      return utilities;
+    }),
+
+  /**
+   * Create a utility on a floor.
+   * FACILITY_ADMIN or higher.
+   */
+  createUtility: siteAdminProcedure
+    .input(
+      z.object({
+        floorId: z.string().min(1),
+        type: z.string().min(1),
+        label: z.string().optional(),
+        x: z.number().min(0),
+        y: z.number().min(0),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const floor = await ctx.db.floor.findUnique({
+        where: { id: input.floorId },
+        include: { site: true },
+      });
+      if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+
+      await assertSiteAdmin(ctx, floor.siteId);
+
+      const utility = await ctx.db.utility.create({
+        data: {
+          organizationId: ctx.organizationId,
+          floorId: input.floorId,
+          type: input.type,
+          label: input.label,
+          x: input.x,
+          y: input.y,
+        },
+      });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "CREATE",
+          targetType: "Utility",
+          targetId: utility.id,
+          after: { type: utility.type, label: utility.label },
+        },
+      });
+
+      return utility;
+    }),
+
+  /**
+   * Update a utility.
+   * FACILITY_ADMIN or higher.
+   */
+  updateUtility: siteAdminProcedure
+    .input(
+      z.object({
+        utilityId: z.string().min(1),
+        type: z.string().min(1),
+        label: z.string().optional(),
+        x: z.number().min(0),
+        y: z.number().min(0),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const utility = await ctx.db.utility.findUnique({
+        where: { id: input.utilityId },
+        include: { floor: true },
+      });
+      if (!utility) throw new TRPCError({ code: "NOT_FOUND", message: "Utility not found." });
+
+      await assertSiteAdmin(ctx, utility.floor.siteId);
+
+      const updated = await ctx.db.utility.update({
+        where: { id: input.utilityId },
+        data: {
+          type: input.type,
+          label: input.label,
+          x: input.x,
+          y: input.y,
+        },
+      });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "UPDATE",
+          targetType: "Utility",
+          targetId: utility.id,
+          before: { type: utility.type },
+          after: { type: updated.type },
+        },
+      });
+
+      return updated;
+    }),
+
+  /**
+   * Delete a utility.
+   * FACILITY_ADMIN or higher.
+   */
+  deleteUtility: siteAdminProcedure
+    .input(z.object({ utilityId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const utility = await ctx.db.utility.findUnique({
+        where: { id: input.utilityId },
+        include: { floor: true },
+      });
+      if (!utility) throw new TRPCError({ code: "NOT_FOUND", message: "Utility not found." });
+
+      await assertSiteAdmin(ctx, utility.floor.siteId);
+
+      await ctx.db.utility.delete({ where: { id: input.utilityId } });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "DELETE",
+          targetType: "Utility",
+          targetId: utility.id,
+          before: { type: utility.type },
+        },
+      });
+    }),
+
+  // ===== ROOMS =====
+
+  /**
+   * List all rooms on a floor.
+   */
+  listRooms: orgProcedure
+    .input(z.object({ floorId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const rooms = await ctx.db.room.findMany({
+        where: { floorId: input.floorId },
+        orderBy: { createdAt: "asc" },
+      });
+      return rooms;
+    }),
+
+  /**
+   * Create a room on a floor.
+   * FACILITY_ADMIN or higher.
+   */
+  createRoom: siteAdminProcedure
+    .input(
+      z.object({
+        floorId: z.string().min(1),
+        name: z.string().min(1),
+        x: z.number().min(0),
+        y: z.number().min(0),
+        width: z.number().min(1),
+        height: z.number().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const floor = await ctx.db.floor.findUnique({
+        where: { id: input.floorId },
+        include: { site: true },
+      });
+      if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+
+      await assertSiteAdmin(ctx, floor.siteId);
+
+      const room = await ctx.db.room.create({
+        data: {
+          organizationId: ctx.organizationId,
+          floorId: input.floorId,
+          name: input.name,
+          x: input.x,
+          y: input.y,
+          width: input.width,
+          height: input.height,
+        },
+      });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "CREATE",
+          targetType: "Room",
+          targetId: room.id,
+          after: { name: room.name },
+        },
+      });
+
+      return room;
+    }),
+
+  /**
+   * Update a room.
+   * FACILITY_ADMIN or higher.
+   */
+  updateRoom: siteAdminProcedure
+    .input(
+      z.object({
+        roomId: z.string().min(1),
+        name: z.string().min(1),
+        x: z.number().min(0),
+        y: z.number().min(0),
+        width: z.number().min(1),
+        height: z.number().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const room = await ctx.db.room.findUnique({
+        where: { id: input.roomId },
+        include: { floor: true },
+      });
+      if (!room) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+
+      await assertSiteAdmin(ctx, room.floor.siteId);
+
+      const updated = await ctx.db.room.update({
+        where: { id: input.roomId },
+        data: {
+          name: input.name,
+          x: input.x,
+          y: input.y,
+          width: input.width,
+          height: input.height,
+        },
+      });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "UPDATE",
+          targetType: "Room",
+          targetId: room.id,
+          before: { name: room.name },
+          after: { name: updated.name },
+        },
+      });
+
+      return updated;
+    }),
+
+  /**
+   * Delete a room.
+   * FACILITY_ADMIN or higher.
+   */
+  deleteRoom: siteAdminProcedure
+    .input(z.object({ roomId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const room = await ctx.db.room.findUnique({
+        where: { id: input.roomId },
+        include: { floor: true },
+      });
+      if (!room) throw new TRPCError({ code: "NOT_FOUND", message: "Room not found." });
+
+      await assertSiteAdmin(ctx, room.floor.siteId);
+
+      await ctx.db.room.delete({ where: { id: input.roomId } });
+
+      await ctx.db.auditLog.create({
+        data: {
+          organizationId: ctx.organizationId,
+          actorId: ctx.session.user.id,
+          action: "DELETE",
+          targetType: "Room",
+          targetId: room.id,
+          before: { name: room.name },
+        },
+      });
     }),
 });
