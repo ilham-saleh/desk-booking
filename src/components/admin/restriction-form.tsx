@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 
 import { api } from "@/lib/trpc/client";
-import { restrictionCreateInputSchema, type RestrictionCreateInput } from "@/server/api/routers/restriction";
+import { restrictionCreateInputSchema, type RestrictionCreateInput } from "@/lib/schemas/restriction";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";

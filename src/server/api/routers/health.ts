@@ -1,3 +1,5 @@
+import "server-only";
+
 import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
 
 export const healthRouter = createTRPCRouter({

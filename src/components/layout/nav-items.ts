@@ -31,8 +31,8 @@ const adminNavItems: NavItem[] = [
   { label: "Editing Platform", href: "/admin/editor", icon: PencilRuler },
   { label: "Facilities / Sites", href: "/admin/sites", icon: Building2 },
   { label: "Users", href: "/admin/users", icon: Users },
-  { label: "Departments", href: "/admin/departments" as Route, icon: Settings2 },
-  { label: "Restrictions", href: "/admin/restrictions" as Route, icon: Lock },
+  { label: "Departments", href: "/admin/departments", icon: Settings2 },
+  { label: "Restrictions", href: "/admin/restrictions", icon: Lock },
 ];
 
 /** Display concern only — actual authorization is re-checked server-side on every request. */

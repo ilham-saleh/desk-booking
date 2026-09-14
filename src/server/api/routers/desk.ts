@@ -2,6 +2,8 @@
  * Desk management router — CRUD for desks, attributes, and availability shifts.
  */
 
+import "server-only";
+
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 

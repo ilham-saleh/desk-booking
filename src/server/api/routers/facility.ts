@@ -3,41 +3,24 @@
  * Access: ORG_SUPER_ADMIN (all sites) or FACILITY_ADMIN (assigned sites only).
  */
 
+import "server-only";
+
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { createTRPCRouter, orgProcedure, siteAdminProcedure, orgAdminProcedure, assertSiteAdmin } from "@/server/api/trpc";
 import { isOrgSuperAdmin } from "@/server/auth/roles";
+import {
+  facilityCreateInputSchema,
+  type FacilityCreateInput,
+  facilityUpdateInputSchema,
+  type FacilityUpdateInput,
+  operatingHoursInputSchema,
+  type OperatingHoursInput,
+} from "@/lib/schemas/facility";
 
-export const facilityCreateInputSchema = z.object({
-  name: z.string().min(1, "Facility name required"),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  country: z.string().optional(),
-  postalCode: z.string().optional(),
-  description: z.string().optional(),
-  timeZone: z.string().min(1, "Timezone required"),
-  unitSystem: z.enum(["METRIC", "IMPERIAL"]).optional(),
-  allowEmployeeSeeBookings: z.boolean().optional(),
-});
-
-export type FacilityCreateInput = z.infer<typeof facilityCreateInputSchema>;
-
-export const facilityUpdateInputSchema = facilityCreateInputSchema.extend({
-  siteId: z.string().min(1),
-});
-
-export type FacilityUpdateInput = z.infer<typeof facilityUpdateInputSchema>;
-
-const operatingHoursSchema = z.object({
-  dayOfWeek: z.number().int().min(0).max(6),
-  openAtMinutes: z.number().int().min(0).max(1440),
-  closeAtMinutes: z.number().int().min(0).max(1440),
-});
-
-export const operatingHoursInputSchema = z.array(operatingHoursSchema);
-
-export type OperatingHoursInput = z.infer<typeof operatingHoursInputSchema>;
+// Re-export for backward compatibility
+export { facilityCreateInputSchema, type FacilityCreateInput, facilityUpdateInputSchema, type FacilityUpdateInput, operatingHoursInputSchema, type OperatingHoursInput };
 
 export const facilityRouter = createTRPCRouter({
   /**

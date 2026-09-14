@@ -1,3 +1,5 @@
+import "server-only";
+
 import { bookingRouter } from "@/server/api/routers/booking";
 import { deskRouter } from "@/server/api/routers/desk";
 import { facilityRouter } from "@/server/api/routers/facility";
