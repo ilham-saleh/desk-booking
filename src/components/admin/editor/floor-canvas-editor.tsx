@@ -7,7 +7,7 @@ import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 interface DeskObject {
@@ -42,6 +42,7 @@ interface FloorCanvasEditorProps {
   imageWidth?: number;
   imageHeight?: number;
   activeObjectType?: "desks" | "utilities" | "rooms" | null;
+  onCancelCreate?: () => void;
 }
 
 export function FloorCanvasEditor({
@@ -51,6 +52,7 @@ export function FloorCanvasEditor({
   imageWidth = 1200,
   imageHeight = 800,
   activeObjectType = null,
+  onCancelCreate,
 }: FloorCanvasEditorProps) {
   const [desks, setDesks] = useState<DeskObject[]>(() => []);
   const [utilities, setUtilities] = useState<UtilityObject[]>(() => []);
@@ -58,11 +60,13 @@ export function FloorCanvasEditor({
   const [selectedDeskId, setSelectedDeskId] = useState<string | null>(null);
   const [selectedUtilityId, setSelectedUtilityId] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const [newDeskNumber, setNewDeskNumber] = useState("");
   const [newUtilityType, setNewUtilityType] = useState("");
   const [newUtilityLabel, setNewUtilityLabel] = useState("");
   const [newRoomName, setNewRoomName] = useState("");
+
+  // Show creation form based on activeObjectType
+  const isCreating = activeObjectType !== null;
   const [stageScale, setStageScale] = useState(1);
   const stageRef = useRef<Konva.Stage>(null);
   const layerRef = useRef<Konva.Layer>(null);
@@ -148,7 +152,7 @@ export function FloorCanvasEditor({
       ]);
       toast.success(`Desk ${newDesk.number} created`);
       setNewDeskNumber("");
-      setIsCreating(false);
+      onCancelCreate?.();
     },
     onError: (err) => {
       toast.error(err.message);
@@ -187,7 +191,7 @@ export function FloorCanvasEditor({
       toast.success(`Utility ${newUtility.type} created`);
       setNewUtilityType("");
       setNewUtilityLabel("");
-      setIsCreating(false);
+      onCancelCreate?.();
     },
     onError: (err) => {
       toast.error(err.message);
@@ -217,7 +221,7 @@ export function FloorCanvasEditor({
       }]);
       toast.success(`Room ${newRoom.name} created`);
       setNewRoomName("");
-      setIsCreating(false);
+      onCancelCreate?.();
     },
     onError: (err) => {
       toast.error(err.message);
@@ -353,19 +357,20 @@ export function FloorCanvasEditor({
         <CardContent className="space-y-4">
           {/* Canvas Controls */}
           <div className="flex gap-2 flex-wrap">
-            <Button
-              size="sm"
-              onClick={() => {
-                setIsCreating(!isCreating);
-                setNewDeskNumber("");
-                setNewUtilityType("");
-                setNewRoomName("");
-              }}
-              variant={isCreating ? "default" : "outline"}
-            >
-              <Plus className="size-4 mr-2" />
-              {isCreating ? "Cancel" : "Create"}
-            </Button>
+            {isCreating && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  setNewDeskNumber("");
+                  setNewUtilityType("");
+                  setNewRoomName("");
+                  onCancelCreate?.();
+                }}
+                variant="outline"
+              >
+                Cancel
+              </Button>
+            )}
             {activeObjectType === "desks" && selectedDesk && (
               <Button size="sm" variant="destructive" onClick={handleDeleteDesk}>
                 <Trash2 className="size-4 mr-2" />

@@ -187,6 +187,7 @@ export default function AdminEditorPage() {
             imageWidth={draftPlan.imageWidth || 1200}
             imageHeight={draftPlan.imageHeight || 800}
             activeObjectType={activeObjectType}
+            onCancelCreate={() => setActiveObjectType(null)}
           />
         ) : (
           <Card>
