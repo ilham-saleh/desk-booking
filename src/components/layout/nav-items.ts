@@ -8,6 +8,8 @@ import {
   Building2,
   Users,
   SquareStack,
+  Settings2,
+  Lock,
 } from "lucide-react";
 
 import { Role } from "@/generated/prisma/enums";
@@ -29,6 +31,8 @@ const adminNavItems: NavItem[] = [
   { label: "Editing Platform", href: "/admin/editor", icon: PencilRuler },
   { label: "Facilities / Sites", href: "/admin/sites", icon: Building2 },
   { label: "Users", href: "/admin/users", icon: Users },
+  { label: "Departments", href: "/admin/departments" as Route, icon: Settings2 },
+  { label: "Restrictions", href: "/admin/restrictions" as Route, icon: Lock },
 ];
 
 /** Display concern only — actual authorization is re-checked server-side on every request. */
