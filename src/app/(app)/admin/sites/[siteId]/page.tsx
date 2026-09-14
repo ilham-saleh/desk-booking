@@ -1,118 +1,194 @@
 "use client";
 
-import { use } from "react";
+import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/trpc/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FloorsList } from "@/components/admin/floors-list";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArrowLeft, PlusCircle, Edit, Trash2 } from "lucide-react";
 
-interface FacilityDetailPageProps {
-  params: Promise<{ siteId: string }>;
-}
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { FloorForm } from "@/components/admin/floor-form";
 
-export default function FacilityDetailPage({ params }: FacilityDetailPageProps) {
-  const { siteId } = use(params);
-  const { data: facility, isPending, error } = api.facility.get.useQuery({ siteId }, { staleTime: 0 });
+export default function FacilityDetailPage() {
+  const router = useRouter();
+  const params = useParams();
+  const siteId = params?.siteId as string;
 
-  if (isPending) {
-    return <div className="space-y-6 p-8">Loading facility...</div>;
-  }
+  const [isCreateFloorOpen, setIsCreateFloorOpen] = useState(false);
+  const [isEditFloorOpen, setIsEditFloorOpen] = useState(false);
+  const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
 
-  if (error) {
-    return <div className="p-8 text-red-600">Error: {error.message}</div>;
-  }
+  const { data: facility, isLoading: facilityLoading } = api.facility.get.useQuery({ siteId });
+  const { data: floors = [], refetch: refetchFloors } = api.floor.listForSite.useQuery({ siteId });
 
-  if (!facility) {
-    return <div className="p-8 text-gray-600">Facility not found</div>;
-  }
+  const deleteFloorMutation = api.floor.delete.useMutation({
+    onSuccess: () => {
+      toast.success("Floor deleted");
+      void refetchFloors();
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
 
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const handleDeleteFloor = (floorId: string) => {
+    if (confirm("Are you sure? This will delete all desks on this floor.")) {
+      deleteFloorMutation.mutate({ floorId });
+    }
+  };
+
+  if (facilityLoading) return <div className="p-8">Loading facility...</div>;
+  if (!facility) return <div className="p-8">Facility not found</div>;
+
+  const selectedFloor = floors.find((f) => f.id === selectedFloorId);
 
   return (
     <div className="space-y-6 p-8">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">{facility.name}</h1>
-        {facility.description && <p className="mt-2 text-gray-600">{facility.description}</p>}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" onClick={() => router.back()}>
+          <ArrowLeft className="size-4" />
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold">{facility.name}</h1>
+          <p className="mt-1 text-gray-600">
+            {facility.city}, {facility.country} • {facility.timeZone}
+          </p>
+        </div>
       </div>
 
-      {/* Facility Info Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Address</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm">{facility.address || "—"}</div>
-          </CardContent>
-        </Card>
+      {/* Facility Details */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Facility Details</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <dt className="font-medium text-gray-600">Address</dt>
+              <dd>{facility.address || "—"}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-600">Postal Code</dt>
+              <dd>{facility.postalCode || "—"}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-600">Description</dt>
+              <dd className="col-span-2">{facility.description || "—"}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-600">Timezone</dt>
+              <dd>{facility.timeZone}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-600">Units</dt>
+              <dd>{facility.unitSystem}</dd>
+            </div>
+            <div>
+              <dt className="font-medium text-gray-600">Show Coworker Bookings</dt>
+              <dd>{facility.allowEmployeeSeeBookings ? "Yes" : "No"}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">City</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm">{facility.city || "—"}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Country</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm">{facility.country || "—"}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Timezone</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm">{facility.timeZone}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabs for Floors, Desks, and Settings */}
-      <Tabs defaultValue="floors" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="floors">Floors</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="floors" className="space-y-4">
-          <FloorsList siteId={siteId} />
-        </TabsContent>
-
-        <TabsContent value="settings" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Operating Hours</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {facility.operatingHours && facility.operatingHours.length > 0 ? (
-                <div className="space-y-2">
-                  {facility.operatingHours.map((hours) => (
-                    <div key={hours.id} className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{dayNames[hours.dayOfWeek]}</span>
-                      <span className="text-gray-600">
-                        {String(Math.floor(hours.openAtMinutes / 60)).padStart(2, "0")}:
-                        {String(hours.openAtMinutes % 60).padStart(2, "0")} —{" "}
-                        {String(Math.floor(hours.closeAtMinutes / 60)).padStart(2, "0")}:
-                        {String(hours.closeAtMinutes % 60).padStart(2, "0")}
-                      </span>
-                    </div>
-                  ))}
+      {/* Floors */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Floors</CardTitle>
+            <CardDescription>Manage floors within this facility</CardDescription>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              setSelectedFloorId(null);
+              setIsCreateFloorOpen(true);
+            }}
+            className="gap-2"
+          >
+            <PlusCircle className="size-4" />
+            New Floor
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {floors.length === 0 ? (
+            <div className="text-center text-gray-500 py-8">
+              No floors yet. Create one to get started.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {floors.map((floor, idx) => (
+                <div key={floor.id} className="flex items-center justify-between rounded border p-4">
+                  <div>
+                    <p className="font-medium">{floor.name}</p>
+                    <p className="text-sm text-gray-600">Floor {idx + 1}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedFloorId(floor.id);
+                        setIsEditFloorOpen(true);
+                      }}
+                    >
+                      <Edit className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteFloor(floor.id)}
+                      disabled={deleteFloorMutation.isPending}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-gray-500">No operating hours configured</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create Floor Dialog */}
+      <Dialog open={isCreateFloorOpen} onOpenChange={setIsCreateFloorOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Floor</DialogTitle>
+          </DialogHeader>
+          <FloorForm
+            mode="create"
+            siteId={siteId}
+            onSuccess={() => {
+              setIsCreateFloorOpen(false);
+              void refetchFloors();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Floor Dialog */}
+      <Dialog open={isEditFloorOpen} onOpenChange={setIsEditFloorOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Floor</DialogTitle>
+          </DialogHeader>
+          {selectedFloor && (
+            <FloorForm
+              mode="edit"
+              floorId={selectedFloorId || ""}
+              initialData={selectedFloor}
+              onSuccess={() => {
+                setIsEditFloorOpen(false);
+                void refetchFloors();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
