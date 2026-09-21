@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Bell, Search } from "lucide-react";
 
 import type { Role } from "@/generated/prisma/enums";
+import { roleLabel } from "@/lib/roles";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,7 +66,7 @@ export function TopBar({ user }: { user: { name: string; email: string; role: Ro
           <DropdownMenuLabel className="flex flex-col">
             <span className="font-medium">{user.name}</span>
             <span className="text-muted-foreground text-xs font-normal">{user.email}</span>
-            <span className="text-muted-foreground text-xs font-normal">{user.role}</span>
+            <span className="text-muted-foreground text-xs font-normal">{roleLabel(user.role)}</span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem disabled>Account</DropdownMenuItem>

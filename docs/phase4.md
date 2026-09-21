@@ -489,7 +489,7 @@ Days:
 TUE, THU
 
 Restriction:
-Credit & Equities
+Credit & Equitiesa
 
 Advance booking:
 30 days

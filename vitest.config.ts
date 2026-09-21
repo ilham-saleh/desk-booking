@@ -21,6 +21,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Every DB-backed suite truncates shared tables in DATABASE_URL_TEST during
+    // setup, so files must not run concurrently against the same database.
+    fileParallelism: false,
     server: {
       // Vitest externalizes node_modules by default (loaded via native Node
       // resolution, bypassing Vite — and the alias above with it). next-auth

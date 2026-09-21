@@ -1,5 +1,7 @@
 /**
- * Desk management router — CRUD for desks, attributes, and availability shifts.
+ * Desk management router — the Editing Platform's desk CRUD (create at a map
+ * position, move, full edit-modal save, safe delete) plus the read-only
+ * eligibility check the Floor Map uses to explain restrictions.
  */
 
 import "server-only";
@@ -7,265 +9,139 @@ import "server-only";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
-import { createTRPCRouter, orgProcedure, siteAdminProcedure, assertSiteAdmin as assertFacilityAdmin } from "@/server/api/trpc";
+import { deskCreateInputSchema, deskMoveInputSchema, deskSaveInputSchema } from "@/lib/schemas/desk";
+import { dateStringSchema } from "@/lib/schemas/booking";
+import { findOverlappingDays, formatDays } from "@/lib/restrictions";
+import { todayInTimeZone } from "@/lib/time-slots";
+import { createTRPCRouter, orgProcedure, siteAdminProcedure, assertSiteAdmin } from "@/server/api/trpc";
+import { canBookForUser } from "@/server/auth/authorization";
+import { ACTIVE_BOOKING_STATUSES } from "@/server/booking/desk-state";
+import { eligibilityDeskInclude, evaluateDeskEligibility } from "@/server/booking/eligibility";
+import type { ScopedDb } from "@/server/tenancy";
+import { Prisma } from "@/generated/prisma/client";
 
-export const availabilityShiftCreateInputSchema = z.object({
-  deskId: z.string().min(1),
-  restrictionId: z.string().optional().nullable(),
-  name: z.string().optional(),
-  daysOfWeek: z.array(z.number().int().min(0).max(6)),
-  advanceBookingWindowDays: z.number().int().min(0).optional(),
-  startTimeMinutes: z.number().int().min(0).max(1440).optional(),
-  endTimeMinutes: z.number().int().min(0).max(1440).optional(),
-});
+export { deskCreateInputSchema, deskMoveInputSchema, deskSaveInputSchema };
 
-export type AvailabilityShiftCreateInput = z.infer<typeof availabilityShiftCreateInputSchema>;
+/** Full desk payload for the edit modal and the Floor Map panel. */
+const deskDetailInclude = {
+  ...eligibilityDeskInclude,
+  attributes: { orderBy: { type: "asc" as const } },
+  assignedOccupant: { select: { id: true, name: true, email: true } },
+  floor: { select: { id: true, name: true, site: { select: { id: true, name: true, timeZone: true } } } },
+} as const;
 
-export const availabilityShiftUpdateInputSchema = availabilityShiftCreateInputSchema.extend({
-  shiftId: z.string().min(1),
-});
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
 
-export type AvailabilityShiftUpdateInput = z.infer<typeof availabilityShiftUpdateInputSchema>;
-
-export const deskCreateInputSchema = z.object({
-  floorId: z.string().min(1),
-  number: z.string().min(1),
-  name: z.string().optional(),
-  x: z.number().min(0),
-  y: z.number().min(0),
-  spaceType: z.string().optional(),
-});
-
-export type DeskCreateInput = z.infer<typeof deskCreateInputSchema>;
-
-export const deskUpdateInputSchema = deskCreateInputSchema.extend({
-  deskId: z.string().min(1),
-});
-
-export type DeskUpdateInput = z.infer<typeof deskUpdateInputSchema>;
+/** "Desk 12" — the lowest unused auto-name on the floor, so placement never asks for a name first. */
+async function nextAutoDeskNumber(db: ScopedDb, floorId: string): Promise<string> {
+  const existing = new Set((await db.desk.findMany({ where: { floorId }, select: { number: true } })).map((d) => d.number));
+  for (let n = existing.size + 1; ; n++) {
+    const candidate = `Desk ${n}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+}
 
 export const deskRouter = createTRPCRouter({
-  // ===== DESK QUERIES =====
+  // ===== QUERIES =====
 
-  /**
-   * Get a single desk by ID.
-   */
-  get: orgProcedure
-    .input(z.object({ deskId: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
-      const desk = await ctx.db.desk.findUnique({
-        where: { id: input.deskId },
-        include: { attributes: true, availabilityShifts: true },
-      });
-      if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found" });
-      return desk;
-    }),
+  /** One desk with attributes, restriction blocks (shift, restriction rules, occupants, departments) and location. */
+  get: orgProcedure.input(z.object({ deskId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    const desk = await ctx.db.desk.findFirst({
+      where: { id: input.deskId, archivedAt: null },
+      include: deskDetailInclude,
+    });
+    if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
+    return desk;
+  }),
 
-  /**
-   * List all desks on a floor.
-   */
-  listForFloor: orgProcedure
-    .input(z.object({ floorId: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
-      const desks = await ctx.db.desk.findMany({
-        where: { floorId: input.floorId },
-        include: { attributes: true },
-        orderBy: { number: "asc" },
-      });
-      return desks;
-    }),
-
-  // ===== AVAILABILITY SHIFTS =====
-
-  /**
-   * List all availability shifts for a desk.
-   */
-  listAvailabilityShifts: orgProcedure
-    .input(z.object({ deskId: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
-      const shifts = await ctx.db.availabilityShift.findMany({
-        where: { deskId: input.deskId, isActive: true },
-        include: { restriction: true },
-        orderBy: { createdAt: "asc" },
-      });
-      return shifts;
-    }),
-
-  /**
-   * Create an availability shift for a desk.
-   * FACILITY_ADMIN or higher (for desk's parent facility).
-   */
-  createAvailabilityShift: siteAdminProcedure
-    .input(availabilityShiftCreateInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      const desk = await ctx.db.desk.findUnique({
-        where: { id: input.deskId },
-        include: { floor: true },
-      });
-      if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found" });
-
-      // Verify admin has access to the desk's facility
-      await assertFacilityAdmin(ctx, desk.floor.siteId);
-
-      const shift = await ctx.db.availabilityShift.create({
-        data: {
-          organizationId: ctx.organizationId,
-          deskId: input.deskId,
-          restrictionId: input.restrictionId || null,
-          name: input.name,
-          daysOfWeek: input.daysOfWeek,
-          advanceBookingWindowDays: input.advanceBookingWindowDays,
-          startTimeMinutes: input.startTimeMinutes,
-          endTimeMinutes: input.endTimeMinutes,
-        },
-        include: { restriction: true },
-      });
-
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "CREATE",
-          targetType: "AvailabilityShift",
-          targetId: shift.id,
-          after: {
-            name: shift.name,
-            daysOfWeek: shift.daysOfWeek,
-            restrictionName: input.restrictionId ? "set" : "none",
+  /** Every live (non-archived) desk on a floor with its restriction blocks — the editor's marker layer. */
+  listForFloor: orgProcedure.input(z.object({ floorId: z.string().min(1) })).query(({ ctx, input }) =>
+    ctx.db.desk.findMany({
+      where: { floorId: input.floorId, archivedAt: null },
+      include: {
+        attributes: true,
+        restrictionAssignments: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            shift: true,
+            restriction: { select: { id: true, name: true, color: true, isActive: true } },
+            occupants: { select: { userId: true, user: { select: { id: true, name: true } } } },
           },
         },
-      });
-
-      return shift;
+      },
+      orderBy: { number: "asc" },
     }),
+  ),
 
   /**
-   * Update an availability shift.
-   * FACILITY_ADMIN or higher.
+   * Read-only eligibility explanation for one desk on one date — the same
+   * engine booking.create enforces, so the Floor Map can say *why* before the
+   * user tries. Standard users may only ask about themselves.
    */
-  updateAvailabilityShift: siteAdminProcedure
-    .input(availabilityShiftUpdateInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      const shift = await ctx.db.availabilityShift.findUnique({
-        where: { id: input.shiftId },
-        include: { desk: { include: { floor: true } } },
-      });
-      if (!shift) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await assertFacilityAdmin(ctx, shift.desk.floor.siteId);
-
-      const updated = await ctx.db.availabilityShift.update({
-        where: { id: input.shiftId },
-        data: {
-          restrictionId: input.restrictionId || null,
-          name: input.name,
-          daysOfWeek: input.daysOfWeek,
-          advanceBookingWindowDays: input.advanceBookingWindowDays,
-          startTimeMinutes: input.startTimeMinutes,
-          endTimeMinutes: input.endTimeMinutes,
-        },
-        include: { restriction: true },
-      });
-
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "UPDATE",
-          targetType: "AvailabilityShift",
-          targetId: shift.id,
-          before: { name: shift.name },
-          after: { name: updated.name },
-        },
-      });
-
-      return updated;
-    }),
-
-  /**
-   * Delete an availability shift (soft-delete via isActive = false).
-   * FACILITY_ADMIN or higher.
-   */
-  deleteAvailabilityShift: siteAdminProcedure
-    .input(z.object({ shiftId: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const shift = await ctx.db.availabilityShift.findUnique({
-        where: { id: input.shiftId },
-        include: { desk: { include: { floor: true } } },
-      });
-      if (!shift) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await assertFacilityAdmin(ctx, shift.desk.floor.siteId);
-
-      await ctx.db.availabilityShift.update({
-        where: { id: input.shiftId },
-        data: { isActive: false },
-      });
-
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "DELETE",
-          targetType: "AvailabilityShift",
-          targetId: shift.id,
-          before: { name: shift.name },
-        },
-      });
-    }),
-
-  /**
-   * Get applicable availability shifts for a desk on a given day.
-   * Used for booking eligibility checking.
-   */
-  getShiftsForDay: orgProcedure
-    .input(
-      z.object({
-        deskId: z.string().min(1),
-        dayOfWeek: z.number().int().min(0).max(6),
-      }),
-    )
+  checkEligibility: orgProcedure
+    .input(z.object({ deskId: z.string().min(1), date: dateStringSchema, occupantUserId: z.string().min(1).optional() }))
     .query(async ({ ctx, input }) => {
-      const shifts = await ctx.db.availabilityShift.findMany({
-        where: {
-          deskId: input.deskId,
-          isActive: true,
-          daysOfWeek: { has: input.dayOfWeek },
-        },
-        include: { restriction: { include: { rules: true } } },
+      const desk = await ctx.db.desk.findFirst({
+        where: { id: input.deskId, archivedAt: null },
+        include: { ...eligibilityDeskInclude, floor: { select: { site: { select: { id: true, name: true, timeZone: true } } } } },
       });
-      return shifts;
+      if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
+
+      // Same rule as booking.create: only someone allowed to book for this
+      // occupant at this site may ask about their eligibility.
+      const occupantId = input.occupantUserId ?? ctx.session.user.id;
+      if (!(await canBookForUser(ctx, occupantId, desk.floor.site.id))) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You can only check eligibility for yourself." });
+      }
+      const occupant = await ctx.db.user.findFirst({
+        where: { id: occupantId },
+        select: { id: true, email: true, department: true },
+      });
+      if (!occupant) throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
+
+      const result = evaluateDeskEligibility({
+        desk,
+        occupant,
+        date: input.date,
+        today: todayInTimeZone(desk.floor.site.timeZone),
+      });
+      return {
+        eligible: result.eligible,
+        status: result.status,
+        reason: result.reason,
+        dayOfWeek: result.dayOfWeek,
+        assignmentId: result.assignment?.id ?? null,
+      };
     }),
 
-  // ===== DESK CRUD =====
+  // ===== MUTATIONS (Facility Admin for the desk's site, or Org Super Admin) =====
 
   /**
-   * Create a desk on a floor.
-   * FACILITY_ADMIN or higher.
+   * Create a desk at a floor-plan position (image-pixel coordinates). The
+   * name is optional so the placement cursor can create first and let the
+   * edit modal name it.
    */
   createDesk: siteAdminProcedure.input(deskCreateInputSchema).mutation(async ({ ctx, input }) => {
-    const floor = await ctx.db.floor.findUnique({
-      where: { id: input.floorId },
-      include: { site: true },
-    });
-    if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found" });
+    const floor = await ctx.db.floor.findUnique({ where: { id: input.floorId }, select: { id: true, siteId: true, name: true } });
+    if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+    await assertSiteAdmin(ctx, floor.siteId);
 
-    await assertFacilityAdmin(ctx, floor.siteId);
+    const number = input.number ?? (await nextAutoDeskNumber(ctx.db, floor.id));
 
-    const desk = await ctx.db.desk.create({
-      data: {
-        organizationId: ctx.organizationId,
-        floorId: input.floorId,
-        number: input.number,
-        name: input.name,
-        x: input.x,
-        y: input.y,
-        spaceType: input.spaceType,
-      },
-    });
+    let desk;
+    try {
+      desk = await ctx.db.desk.create({
+        data: { organizationId: ctx.organizationId, floorId: floor.id, number, x: input.x, y: input.y },
+        include: deskDetailInclude,
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new TRPCError({ code: "CONFLICT", message: `A desk named "${number}" already exists on ${floor.name}.` });
+      }
+      throw error;
+    }
 
     await ctx.db.auditLog.create({
       data: {
@@ -274,35 +150,154 @@ export const deskRouter = createTRPCRouter({
         action: "CREATE",
         targetType: "Desk",
         targetId: desk.id,
-        after: { number: desk.number, floor: floor.name },
+        after: { number: desk.number, floor: floor.name, x: desk.x, y: desk.y },
       },
     });
 
     return desk;
   }),
 
-  /**
-   * Update a desk.
-   * FACILITY_ADMIN or higher.
-   */
-  updateDesk: siteAdminProcedure.input(deskUpdateInputSchema).mutation(async ({ ctx, input }) => {
-    const desk = await ctx.db.desk.findUnique({
-      where: { id: input.deskId },
-      include: { floor: true },
+  /** Persist a drag-and-drop reposition. Coordinates are floor-plan image pixels, not viewport pixels. */
+  moveDesk: siteAdminProcedure.input(deskMoveInputSchema).mutation(async ({ ctx, input }) => {
+    const desk = await ctx.db.desk.findFirst({
+      where: { id: input.deskId, archivedAt: null },
+      include: { floor: { select: { siteId: true } } },
     });
-    if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
-
-    await assertFacilityAdmin(ctx, desk.floor.siteId);
+    if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
+    await assertSiteAdmin(ctx, desk.floor.siteId);
 
     const updated = await ctx.db.desk.update({
-      where: { id: input.deskId },
+      where: { id: desk.id },
+      data: { x: input.x, y: input.y },
+      select: { id: true, x: true, y: true, number: true },
+    });
+
+    await ctx.db.auditLog.create({
       data: {
-        number: input.number,
-        name: input.name,
-        x: input.x,
-        y: input.y,
-        spaceType: input.spaceType,
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "MOVE",
+        targetType: "Desk",
+        targetId: desk.id,
+        before: { x: desk.x, y: desk.y },
+        after: { x: updated.x, y: updated.y },
       },
+    });
+
+    return updated;
+  }),
+
+  /**
+   * The Edit Desk modal's Save: details, status, booking configuration,
+   * attributes and the full list of restriction blocks — written in one
+   * transaction so a refresh can never show a half-saved desk.
+   */
+  save: siteAdminProcedure.input(deskSaveInputSchema).mutation(async ({ ctx, input }) => {
+    const desk = await ctx.db.desk.findFirst({
+      where: { id: input.deskId, archivedAt: null },
+      include: { floor: { select: { id: true, siteId: true, name: true } }, restrictionAssignments: true, attributes: true },
+    });
+    if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
+    await assertSiteAdmin(ctx, desk.floor.siteId);
+
+    // --- Validation: everything referenced must exist in this org and be active ---
+    const duplicate = await ctx.db.desk.findFirst({
+      where: { floorId: desk.floorId, number: input.number, id: { not: desk.id } },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw new TRPCError({ code: "CONFLICT", message: `A desk named "${input.number}" already exists on ${desk.floor.name}.` });
+    }
+
+    if (input.assignedOccupantId) {
+      const occupant = await ctx.db.user.findFirst({ where: { id: input.assignedOccupantId, isActive: true } });
+      if (!occupant) throw new TRPCError({ code: "BAD_REQUEST", message: "That occupant wasn't found in your organization." });
+    }
+
+    const shiftIds = [...new Set(input.assignments.map((a) => a.shiftId))];
+    const shifts = await ctx.db.availabilityShift.findMany({ where: { id: { in: shiftIds }, isActive: true } });
+    if (shifts.length !== shiftIds.length) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "One of the selected availability shifts no longer exists." });
+    }
+    const shiftById = new Map(shifts.map((s) => [s.id, s]));
+
+    const restrictionIds = [
+      ...new Set(input.assignments.filter((a) => a.restrictionMode === "CUSTOM").map((a) => a.restrictionId!)),
+    ];
+    if (restrictionIds.length > 0) {
+      const restrictions = await ctx.db.bookingRestriction.findMany({ where: { id: { in: restrictionIds }, isActive: true } });
+      if (restrictions.length !== restrictionIds.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "One of the selected custom restrictions no longer exists." });
+      }
+    }
+
+    // Exactly one block may govern a weekday, otherwise booking rules would be ambiguous (CLAUDE.md §20).
+    const overlapping = findOverlappingDays(input.assignments.map((a) => ({ daysOfWeek: shiftById.get(a.shiftId)!.daysOfWeek })));
+    if (overlapping.length > 0) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `${formatDays(overlapping)} ${overlapping.length === 1 ? "is" : "are"} covered by more than one restriction block. Each day can only have one.`,
+      });
+    }
+
+    // Block occupants must be real, active employees of this organization.
+    const blockOccupantIds = [
+      ...new Set(input.assignments.filter((a) => a.restrictionMode === "ASSIGNED_OCCUPANTS").flatMap((a) => a.occupantUserIds)),
+    ];
+    if (blockOccupantIds.length > 0) {
+      const found = await ctx.db.user.count({ where: { id: { in: blockOccupantIds }, isActive: true } });
+      if (found !== blockOccupantIds.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "One of the selected occupants wasn't found in your organization." });
+      }
+    }
+
+    // --- Write ---
+    const attributeKeys = [...new Set(input.attributes.map((a) => a.toUpperCase()))];
+    const removedAttributes = desk.attributes.filter((a) => !attributeKeys.includes(a.type)).map((a) => a.id);
+    const newAttributes = attributeKeys.filter((key) => !desk.attributes.some((a) => a.type === key));
+
+    const saved = await ctx.db.$transaction(async (tx) => {
+      await tx.desk.update({
+        where: { id: desk.id },
+        data: {
+          number: input.number,
+          description: input.description?.length ? input.description : null,
+          spaceType: input.spaceType?.length ? input.spaceType : null,
+          isActive: input.isActive,
+          requiresCheckIn: input.requiresCheckIn,
+          assignmentMode: input.assignmentMode,
+          assignedOccupantId: input.assignedOccupantId ?? null,
+        },
+      });
+
+      if (removedAttributes.length > 0) await tx.deskAttribute.deleteMany({ where: { id: { in: removedAttributes } } });
+      if (newAttributes.length > 0) {
+        await tx.deskAttribute.createMany({
+          data: newAttributes.map((type) => ({ organizationId: ctx.organizationId, deskId: desk.id, type })),
+        });
+      }
+
+      await tx.deskRestrictionAssignment.deleteMany({ where: { deskId: desk.id } });
+      for (const [index, block] of input.assignments.entries()) {
+        await tx.deskRestrictionAssignment.create({
+          data: {
+            organizationId: ctx.organizationId,
+            deskId: desk.id,
+            restrictionMode: block.restrictionMode,
+            restrictionId: block.restrictionMode === "CUSTOM" ? block.restrictionId! : null,
+            departmentNames: block.restrictionMode === "DEPARTMENT" ? [...new Set(block.departmentNames.map((n) => n.trim()))] : [],
+            shiftId: block.shiftId,
+            advanceBookingWindowDays: block.advanceBookingWindowDays ?? null,
+            sortOrder: index,
+            occupants:
+              block.restrictionMode === "ASSIGNED_OCCUPANTS"
+                ? { create: [...new Set(block.occupantUserIds)].map((userId) => ({ organizationId: ctx.organizationId, userId })) }
+                : undefined,
+          },
+        });
+      }
+
+      return tx.desk.findUniqueOrThrow({ where: { id: desk.id }, include: deskDetailInclude });
     });
 
     await ctx.db.auditLog.create({
@@ -312,87 +307,79 @@ export const deskRouter = createTRPCRouter({
         action: "UPDATE",
         targetType: "Desk",
         targetId: desk.id,
-        before: { number: desk.number },
-        after: { number: updated.number },
+        before: { number: desk.number, isActive: desk.isActive, assignments: desk.restrictionAssignments.length },
+        after: {
+          number: saved.number,
+          isActive: saved.isActive,
+          assignments: saved.restrictionAssignments.map((a) => ({
+            mode: a.restrictionMode,
+            restriction: a.restriction?.name ?? null,
+            departments: a.departmentNames,
+            occupants: a.occupants.length,
+            shift: a.shift.name,
+            advanceBookingWindowDays: a.advanceBookingWindowDays,
+          })),
+        },
       },
     });
 
-    return updated;
+    return saved;
   }),
 
   /**
-   * Delete a desk.
-   * FACILITY_ADMIN or higher.
+   * Remove a desk from its floor safely:
+   *  - future active bookings → refused with a count (admin must cancel them first)
+   *  - past booking history → archived (hidden from every map, history kept)
+   *  - no bookings at all → hard-deleted
    */
-  deleteDesk: siteAdminProcedure
-    .input(z.object({ deskId: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const desk = await ctx.db.desk.findUnique({
-        where: { id: input.deskId },
-        include: { floor: true },
+  deleteDesk: siteAdminProcedure.input(z.object({ deskId: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+    const desk = await ctx.db.desk.findFirst({
+      where: { id: input.deskId, archivedAt: null },
+      include: { floor: { select: { siteId: true, name: true } } },
+    });
+    if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
+    await assertSiteAdmin(ctx, desk.floor.siteId);
+
+    const now = new Date();
+    const futureBookings = await ctx.db.booking.count({
+      where: { deskId: desk.id, status: { in: ACTIVE_BOOKING_STATUSES }, endAt: { gt: now } },
+    });
+    if (futureBookings > 0) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `Desk ${desk.number} has ${futureBookings} upcoming booking${futureBookings === 1 ? "" : "s"}. Cancel or move ${futureBookings === 1 ? "it" : "them"} before deleting the desk, or mark the desk inactive instead.`,
       });
-      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+    }
 
-      await assertFacilityAdmin(ctx, desk.floor.siteId);
+    const historicalBookings = await ctx.db.booking.count({ where: { deskId: desk.id } });
+    const mode: "deleted" | "archived" = historicalBookings > 0 ? "archived" : "deleted";
 
-      await ctx.db.desk.delete({ where: { id: input.deskId } });
+    // Archived desks keep their bookings but must not block the name for a new desk on the floor.
+    const archivedNumber = `${desk.number} [archived ${desk.id.slice(-6)}]`;
 
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "DELETE",
-          targetType: "Desk",
-          targetId: desk.id,
-          before: { number: desk.number },
-        },
-      });
-    }),
+    await ctx.db.$transaction(async (tx) => {
+      if (mode === "archived") {
+        await tx.deskRestrictionAssignment.deleteMany({ where: { deskId: desk.id } });
+        await tx.deskWatch.deleteMany({ where: { deskId: desk.id } });
+        await tx.desk.update({ where: { id: desk.id }, data: { isActive: false, archivedAt: now, number: archivedNumber } });
+      } else {
+        await tx.deskWatch.deleteMany({ where: { deskId: desk.id } });
+        await tx.desk.delete({ where: { id: desk.id } });
+      }
+    });
 
-  /**
-   * Add attribute to a desk.
-   */
-  addAttribute: siteAdminProcedure
-    .input(z.object({ deskId: z.string().min(1), type: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const desk = await ctx.db.desk.findUnique({
-        where: { id: input.deskId },
-        include: { floor: true },
-      });
-      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: mode === "archived" ? "ARCHIVE" : "DELETE",
+        targetType: "Desk",
+        targetId: desk.id,
+        before: { number: desk.number, floor: desk.floor.name, historicalBookings },
+        after: mode === "archived" ? { number: archivedNumber, archivedAt: now } : undefined,
+      },
+    });
 
-      await assertFacilityAdmin(ctx, desk.floor.siteId);
-
-      const existing = await ctx.db.deskAttribute.findUnique({
-        where: { deskId_type: { deskId: input.deskId, type: input.type } },
-      });
-      if (existing) return existing;
-
-      return ctx.db.deskAttribute.create({
-        data: {
-          organizationId: ctx.organizationId,
-          deskId: input.deskId,
-          type: input.type,
-        },
-      });
-    }),
-
-  /**
-   * Remove attribute from a desk.
-   */
-  removeAttribute: siteAdminProcedure
-    .input(z.object({ deskId: z.string().min(1), type: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const desk = await ctx.db.desk.findUnique({
-        where: { id: input.deskId },
-        include: { floor: true },
-      });
-      if (!desk) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await assertFacilityAdmin(ctx, desk.floor.siteId);
-
-      await ctx.db.deskAttribute.deleteMany({
-        where: { deskId: input.deskId, type: input.type },
-      });
-    }),
+    return { mode, deskId: desk.id, number: desk.number };
+  }),
 });

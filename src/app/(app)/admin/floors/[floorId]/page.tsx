@@ -48,7 +48,7 @@ export default function FloorDetailPage({ params }: FloorDetailPageProps) {
           <CardTitle>Desks</CardTitle>
         </CardHeader>
         <CardContent>
-          <DesksList floorId={floorId} />
+          <DesksList floorId={floorId} planWidth={floor.livePlanVersion?.imageWidth} planHeight={floor.livePlanVersion?.imageHeight} />
         </CardContent>
       </Card>
     </div>

@@ -1,56 +1,56 @@
 "use client";
 
-import { useState } from "react";
-import { api } from "@/lib/trpc/client";
+import { useMemo, useState } from "react";
 import { PlusCircle, Edit, Trash2 } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { RestrictionForm } from "@/components/admin/restriction-form";
 import { toast } from "sonner";
 
+import { api } from "@/lib/trpc/client";
+import { describeRules } from "@/lib/restrictions";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Swatch } from "@/components/ui/combobox";
+import { RestrictionEditorDialog, type EditableRestriction } from "@/components/admin/restrictions/restriction-editor-dialog";
+
+/** Admin → Restrictions: the same reusable restriction records the Edit Desk modal assigns. */
 export default function RestrictionsPage() {
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [isEditOpen, setIsEditOpen] = useState(false);
-  const [selectedRestrictionId, setSelectedRestrictionId] = useState<string | null>(null);
+  const utils = api.useUtils();
+  const [query, setQuery] = useState("");
+  const [editing, setEditing] = useState<EditableRestriction | null | undefined>(undefined);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string; deskCount: number } | null>(null);
 
-  const { data: restrictions = [], refetch } = api.restriction.listRestrictions.useQuery();
-  const { data: selectedRestriction } = api.restriction.getRestriction.useQuery(
-    { restrictionId: selectedRestrictionId! },
-    { enabled: !!selectedRestrictionId && isEditOpen },
+  const { data: restrictions = [], isPending } = api.restriction.listRestrictions.useQuery();
+  const userIds = useMemo(
+    () => [...new Set(restrictions.flatMap((r) => r.rules.filter((rule) => rule.fieldType === "USER").flatMap((rule) => (Array.isArray(rule.value) ? (rule.value as string[]) : []))))],
+    [restrictions],
   );
+  const users = api.user.search.useQuery({ ids: userIds }, { enabled: userIds.length > 0 });
+  const resolveUser = (id: string) => users.data?.find((u) => u.id === id)?.name;
 
-  const deleteMutation = api.restriction.deleteRestriction.useMutation({
-    onSuccess: () => {
-      toast.success("Restriction deleted");
-      void refetch();
-    },
-    onError: (err) => {
-      toast.error(err.message);
-    },
+  const filtered = restrictions.filter((r) => {
+    const q = query.trim().toLowerCase();
+    return !q || r.name.toLowerCase().includes(q) || describeRules(r.rules, { resolveUser }).toLowerCase().includes(q);
   });
 
-  const handleDelete = (restrictionId: string) => {
-    if (confirm("Delete this restriction?")) {
-      deleteMutation.mutate({ restrictionId });
-    }
-  };
+  const deleteMutation = api.restriction.deleteRestriction.useMutation({
+    onSuccess: (result) => {
+      toast.success(result.removedFromDesks > 0 ? `Restriction deleted and removed from ${result.removedFromDesks} desk(s)` : "Restriction deleted");
+      void utils.restriction.listRestrictions.invalidate();
+      void utils.desk.invalidate();
+      setPendingDelete(null);
+    },
+    onError: (err) => toast.error(err.message),
+  });
 
   return (
     <div className="space-y-6 p-8">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Booking Restrictions</h1>
-          <p className="mt-2 text-gray-600">Create reusable restriction groups to control desk booking eligibility.</p>
+          <p className="mt-2 text-gray-600">Reusable rule sets that desk restriction blocks assign to specific days.</p>
         </div>
-        <Button
-          onClick={() => {
-            setSelectedRestrictionId(null);
-            setIsCreateOpen(true);
-          }}
-          className="gap-2"
-        >
+        <Button onClick={() => setEditing(null)} className="gap-2">
           <PlusCircle className="size-4" />
           New Restriction
         </Button>
@@ -59,88 +59,66 @@ export default function RestrictionsPage() {
       <Card>
         <CardHeader>
           <CardTitle>All Restrictions</CardTitle>
-          <CardDescription>Reusable restriction groups used by desk availability shifts</CardDescription>
+          <CardDescription>Assign these to desks from the Editing Platform (Edit Desk → Bookings restricted to → Custom restriction).</CardDescription>
         </CardHeader>
-        <CardContent>
-          {restrictions.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
-              No restrictions yet. Create one to control desk booking access.
-            </div>
+        <CardContent className="space-y-4">
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by restriction name or employee field" aria-label="Search restrictions" className="max-w-md" />
+          {isPending ? (
+            <p className="text-muted-foreground py-8 text-center">Loading…</p>
+          ) : filtered.length === 0 ? (
+            <div className="py-8 text-center text-gray-500">{query ? "No restrictions match your search." : "No restrictions yet. Create one to control desk booking access."}</div>
           ) : (
-            <div className="space-y-3">
-              {restrictions.map((restriction) => (
-                <div key={restriction.id} className="flex items-center justify-between rounded border p-4">
-                  <div>
+            <ul className="space-y-3">
+              {filtered.map((restriction) => (
+                <li key={restriction.id} className="flex items-start gap-3 rounded border p-4">
+                  <Swatch color={restriction.color ?? "#9ca3af"} className="mt-1.5 size-3" />
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium">{restriction.name}</p>
-                    <p className="text-sm text-gray-600">{restriction.rules.length} rule(s)</p>
+                    <p className="text-sm text-gray-600">{describeRules(restriction.rules, { resolveUser, maxValues: 12 })}</p>
+                    <p className="text-muted-foreground mt-0.5 text-xs">
+                      {restriction.deskCount === 0 ? "Not assigned to any desk" : `Assigned to ${restriction.deskCount} desk(s) on ${restriction.floorCount} floor(s)`}
+                    </p>
                   </div>
                   <div className="flex gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedRestrictionId(restriction.id);
-                        setIsEditOpen(true);
-                      }}
-                    >
+                    <Button variant="ghost" size="sm" aria-label={`Edit ${restriction.name}`} onClick={() => setEditing(restriction)}>
                       <Edit className="size-4" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleDelete(restriction.id)}
-                      disabled={deleteMutation.isPending}
+                      aria-label={`Delete ${restriction.name}`}
+                      onClick={() => setPendingDelete({ id: restriction.id, name: restriction.name, deskCount: restriction.deskCount })}
                     >
                       <Trash2 className="size-4" />
                     </Button>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </CardContent>
       </Card>
 
-      {/* Create Dialog */}
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Create Booking Restriction</DialogTitle>
-          </DialogHeader>
-          <RestrictionForm
-            mode="create"
-            onSuccess={() => {
-              setIsCreateOpen(false);
-              void refetch();
-            }}
-          />
-        </DialogContent>
-      </Dialog>
+      <RestrictionEditorDialog open={editing !== undefined} onOpenChange={(next) => !next && setEditing(undefined)} restriction={editing ?? null} onSaved={() => setEditing(undefined)} />
 
-      {/* Edit Dialog */}
-      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={!!pendingDelete} onOpenChange={(next) => !next && setPendingDelete(null)}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Booking Restriction</DialogTitle>
+            <DialogTitle>Delete “{pendingDelete?.name}”?</DialogTitle>
+            <DialogDescription>
+              {pendingDelete && pendingDelete.deskCount > 0
+                ? `This restriction is currently assigned to ${pendingDelete.deskCount} desk(s). Deleting it removes those restriction blocks from the desks.`
+                : "This restriction isn't assigned to any desk."}
+            </DialogDescription>
           </DialogHeader>
-          {selectedRestriction && (
-            <RestrictionForm
-              mode="edit"
-              initialData={{
-                id: selectedRestriction.id,
-                name: selectedRestriction.name,
-                rules: selectedRestriction.rules.map((r) => ({
-                  fieldType: r.fieldType,
-                  operator: r.operator,
-                  value: (r.value as unknown) as string | string[],
-                })),
-              }}
-              onSuccess={() => {
-                setIsEditOpen(false);
-                void refetch();
-              }}
-            />
-          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={deleteMutation.isPending} onClick={() => pendingDelete && deleteMutation.mutate({ restrictionId: pendingDelete.id, force: pendingDelete.deskCount > 0 })}>
+              {deleteMutation.isPending ? "Deleting…" : "Delete restriction"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -41,3 +41,6 @@ next-env.d.ts
 
 # testing / coverage
 coverage/
+
+# reference-app screenshots used for behavioural reference; show real employee data
+docs/screenshots/

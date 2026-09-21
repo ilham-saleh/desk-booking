@@ -16,8 +16,10 @@ import { cancelBooking } from "@/server/booking/cancel-booking";
 import { checkInToBooking } from "@/server/booking/check-in";
 import { createBooking } from "@/server/booking/create-booking";
 import { ACTIVE_BOOKING_STATUSES, computeDeskState, isDeskFreeForRange } from "@/server/booking/desk-state";
+import { eligibilityDeskInclude, evaluateDeskEligibility } from "@/server/booking/eligibility";
 import { endBookingEarly } from "@/server/booking/end-booking";
 import { zonedDateTimeToUtc } from "@/server/booking/time";
+import { todayInTimeZone } from "@/lib/time-slots";
 
 const getFloorAvailabilityInput = z
   .object({
@@ -40,9 +42,16 @@ export const bookingRouter = createTRPCRouter({
   getFloorAvailability: orgProcedure.input(getFloorAvailabilityInput).query(async ({ ctx, input }) => {
     const floor = await ctx.db.floor.findUnique({
       where: { id: input.floorId },
-      include: { site: true, desks: true },
+      include: { site: true, desks: { where: { archivedAt: null }, include: eligibilityDeskInclude } },
     });
     if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+
+    // Restricted state is per viewer: evaluate each desk for the signed-in user as occupant.
+    const viewer = await ctx.db.user.findFirst({
+      where: { id: ctx.session.user.id },
+      select: { id: true, email: true, department: true },
+    });
+    const today = todayInTimeZone(floor.site.timeZone);
 
     const dayStart = zonedDateTimeToUtc(input.date, 0, floor.site.timeZone);
     const dayEnd = zonedDateTimeToUtc(input.date, 24 * 60, floor.site.timeZone);
@@ -63,9 +72,20 @@ export const bookingRouter = createTRPCRouter({
     const desks = floor.desks.map((desk) => {
       const deskBookings = bookings.filter((booking) => booking.deskId === desk.id);
       const activeBookings = deskBookings.filter((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
+      const eligibility = evaluateDeskEligibility({
+        desk,
+        occupant: viewer,
+        date: input.date,
+        today,
+        startMinutes: input.startMinutes,
+        endMinutes: input.endMinutes,
+      });
       return {
         deskId: desk.id,
         state: computeDeskState(desk, deskBookings, now),
+        /** Whether the signed-in viewer could book this desk on this date (restriction/shift/window). */
+        eligibleForViewer: eligibility.eligible,
+        eligibilityReason: eligibility.reason,
         freeForRequestedSlot: requestedRange
           ? isDeskFreeForRange(deskBookings, requestedRange.start, requestedRange.end)
           : undefined,

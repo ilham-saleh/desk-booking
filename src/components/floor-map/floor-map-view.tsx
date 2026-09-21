@@ -46,6 +46,7 @@ export function FloorMapView({ currentUserId, currentUserRole }: { currentUserId
         y: desk.y,
         requiresCheckIn: desk.requiresCheckIn,
         state: live?.state ?? "INACTIVE",
+        eligibleForViewer: live?.eligibleForViewer,
       };
     });
   }, [floor.data, availability.data]);
@@ -136,12 +137,14 @@ export function FloorMapView({ currentUserId, currentUserRole }: { currentUserId
         </Card>
       )}
 
-      {selectedDesk && floor.data && (
+      {selectedDesk && floor.data && effectiveDate && (
         <DeskPanel
           open={!!selectedDeskId}
           onOpenChange={(open) => !open && setSelectedDeskId(null)}
           desk={selectedDesk}
           site={floor.data.site}
+          floorName={floor.data.name}
+          initialDate={effectiveDate}
           occupants={selectedDeskAvailability?.bookings ?? []}
           currentUserId={currentUserId}
           currentUserRole={currentUserRole}

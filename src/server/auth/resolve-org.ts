@@ -18,6 +18,12 @@ function toIdentity(user: {
   role: Role;
   organizationId: string | null;
 }): ResolvedIdentity {
+  // Every resolver funnels a successful sign-in through here — record it for
+  // the Users page's Last Activity column without blocking the sign-in.
+  void db.user
+    .update({ where: { id: user.id }, data: { lastLoginAt: new Date() }, select: { id: true } })
+    .catch((error: unknown) => console.error("Failed to record last login", { userId: user.id, error }));
+
   return {
     id: user.id,
     name: user.name,

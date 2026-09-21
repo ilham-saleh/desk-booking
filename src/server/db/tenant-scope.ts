@@ -20,6 +20,12 @@ const TENANT_MODELS = new Set([
   "DeskWatch",
   "Notification",
   "AuditLog",
+  "Department",
+  "BookingRestriction",
+  "AvailabilityShift",
+  "DeskRestrictionAssignment",
+  "DeskAttribute",
+  "SiteOperatingHours",
 ]);
 
 const UNIQUE_WHERE_OPERATIONS = new Set(["findUnique", "findUniqueOrThrow", "update", "delete"]);

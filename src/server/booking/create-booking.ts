@@ -1,11 +1,13 @@
 import { TRPCError } from "@trpc/server";
 
 import type { CreateBookingInput } from "@/lib/schemas/booking";
-import { isSiteAdminRole, type Session } from "@/server/auth/roles";
-import { assertSiteAdmin } from "@/server/api/trpc";
+import type { Session } from "@/server/auth/roles";
+import { assertCanBookForUser } from "@/server/auth/authorization";
 import type { ScopedDb } from "@/server/tenancy";
 import { ACTIVE_BOOKING_STATUSES, isDeskFreeForRange } from "@/server/booking/desk-state";
+import { eligibilityDeskInclude, evaluateDeskEligibility } from "@/server/booking/eligibility";
 import { isWeekday, zonedDateTimeToUtc } from "@/server/booking/time";
+import { todayInTimeZone } from "@/lib/time-slots";
 import { Prisma } from "@/generated/prisma/client";
 import { BookingStatus } from "@/generated/prisma/enums";
 
@@ -34,10 +36,16 @@ function conflictErrorFor(error: unknown): TRPCError | null {
   return null;
 }
 
+/**
+ * Who the booking is for. Booking on behalf of another employee or a guest is
+ * governed by `canBookForUser` (System Admin anywhere, Facility Admin at a
+ * managed site, Booking Manager at a site they hold a BOOK_FOR_OTHERS
+ * permission for) — never by the role alone.
+ */
 async function resolveBookingSubject(
   ctx: { db: ScopedDb; session: Session },
   input: CreateBookingInput,
-  siteId: string,
+  site: { id: string; name: string },
 ): Promise<BookingSubject> {
   const actorId = ctx.session.user.id;
 
@@ -45,15 +53,12 @@ async function resolveBookingSubject(
     return { userId: actorId, bookedById: actorId, guestName: null };
   }
 
-  if (!isSiteAdminRole(ctx.session)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can book on behalf of another user or a guest." });
-  }
-  await assertSiteAdmin(ctx, siteId);
-
   if (input.guestName) {
+    await assertCanBookForUser(ctx, null, site);
     return { userId: null, bookedById: actorId, guestName: input.guestName };
   }
 
+  await assertCanBookForUser(ctx, input.forUserId!, site);
   const target = await ctx.db.user.findUnique({ where: { id: input.forUserId! } });
   if (!target || !target.isActive) {
     throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
@@ -65,15 +70,15 @@ export async function createBooking(
   ctx: { db: ScopedDb; session: Session; organizationId: string },
   input: CreateBookingInput,
 ) {
-  const desk = await ctx.db.desk.findUnique({
-    where: { id: input.deskId },
-    include: { floor: { include: { site: true } } },
+  const desk = await ctx.db.desk.findFirst({
+    where: { id: input.deskId, archivedAt: null },
+    include: { floor: { include: { site: true } }, ...eligibilityDeskInclude },
   });
   if (!desk) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
   }
   if (!desk.isActive) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "This desk isn't bookable." });
+    throw new TRPCError({ code: "BAD_REQUEST", message: `Desk ${desk.number} is inactive and can't be booked.` });
   }
 
   const site = desk.floor.site;
@@ -91,7 +96,7 @@ export async function createBooking(
     throw new TRPCError({ code: "BAD_REQUEST", message: "Can't book a time in the past." });
   }
 
-  const subject = await resolveBookingSubject(ctx, input, site.id);
+  const subject = await resolveBookingSubject(ctx, input, site);
 
   // Friendly pre-check — the exclusion constraint below is the actual enforcement (CLAUDE.md rule 2/4).
   const dayStart = zonedDateTimeToUtc(input.date, 0, site.timeZone);
@@ -109,104 +114,29 @@ export async function createBooking(
     }
   }
 
-  // Validate occupant against desk restrictions for this day
-  if (subject.userId) {
-    const dayOfWeek = new Date(`${input.date}T00:00:00Z`).getUTCDay();
+  // Restriction / shift / advance-window check — evaluated against the OCCUPANT
+  // (never the admin booking on their behalf) by the shared eligibility engine.
+  const occupant = subject.userId
+    ? await ctx.db.user.findFirst({ where: { id: subject.userId }, select: { id: true, email: true, department: true } })
+    : null;
+  if (subject.userId && !occupant) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Occupant user not found." });
+  }
 
-    // Get applicable availability shifts for this day
-    const shifts = await ctx.db.availabilityShift.findMany({
-      where: {
-        deskId: desk.id,
-        isActive: true,
-        daysOfWeek: { has: dayOfWeek },
-      },
-      include: { restriction: { include: { rules: true } } },
-    });
-
-    // If no shifts defined, desk is not bookable on this day
-    if (shifts.length === 0) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: "This desk is not available for booking on this day.",
-      });
-    }
-
-    // Check if occupant matches at least one shift's restriction
-    const occupant = await ctx.db.user.findUnique({ where: { id: subject.userId } });
-    if (!occupant) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Occupant user not found." });
-    }
-
-    let matchesAnyShift = false;
-    let mismatchReason = "";
-
-    for (const shift of shifts) {
-      // Check advance booking window for this shift
-      if (shift.advanceBookingWindowDays) {
-        const now = new Date();
-        const dayMillis = shift.advanceBookingWindowDays * 24 * 60 * 60 * 1000;
-        const maxBookingDate = new Date(now.getTime() + dayMillis);
-        if (startAt > maxBookingDate) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `Bookings for this desk must be within ${shift.advanceBookingWindowDays} days in advance.`,
-          });
-        }
-      }
-
-      // Check restriction (if no restriction, anyone can book)
-      if (!shift.restriction || shift.restriction.rules.length === 0) {
-        matchesAnyShift = true;
-        break;
-      }
-
-      // Check if occupant matches this restriction
-      let shiftMatches = false;
-      for (const rule of shift.restriction.rules) {
-        const ruleValues = Array.isArray(rule.value) ? rule.value : [rule.value];
-        let ruleMatches = false;
-
-        switch (rule.fieldType) {
-          case "DEPARTMENT":
-            ruleMatches = ruleValues.includes(occupant.department || "");
-            break;
-          case "EMAIL":
-            ruleMatches = ruleValues.includes(occupant.email);
-            break;
-          case "USER":
-            ruleMatches = ruleValues.includes(occupant.id);
-            break;
-        }
-
-        // Apply operator
-        if (rule.operator.startsWith("IS_NOT")) {
-          ruleMatches = !ruleMatches;
-        }
-
-        // Currently OR logic within a shift
-        if (ruleMatches) {
-          shiftMatches = true;
-          break;
-        }
-      }
-
-      if (shiftMatches) {
-        matchesAnyShift = true;
-        break;
-      }
-
-      // Store reason for first non-matching shift
-      if (!mismatchReason) {
-        mismatchReason = `Restricted to ${shift.restriction.name} on this day.`;
-      }
-    }
-
-    if (!matchesAnyShift) {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: `Not eligible to book this desk. ${mismatchReason}`,
-      });
-    }
+  const eligibility = evaluateDeskEligibility({
+    desk,
+    occupant,
+    date: input.date,
+    today: todayInTimeZone(site.timeZone),
+    startMinutes: input.startMinutes,
+    endMinutes: input.endMinutes,
+  });
+  if (!eligibility.eligible) {
+    const isAccessDenial =
+      eligibility.status === "RESTRICTION_MISMATCH" ||
+      eligibility.status === "DEPARTMENT_MISMATCH" ||
+      eligibility.status === "NOT_ASSIGNED_OCCUPANT";
+    throw new TRPCError({ code: isAccessDenial ? "FORBIDDEN" : "BAD_REQUEST", message: eligibility.reason ?? "This desk can't be booked." });
   }
 
   try {

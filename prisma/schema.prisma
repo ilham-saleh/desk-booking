@@ -29,6 +29,17 @@ enum OrgStatus {
   TRIAL
 }
 
+/// What a Permission row grants at its site. A row is only meaningful for the
+/// role it belongs to (FACILITY_ADMIN rows for SITE_ADMIN users, BOOK_FOR_OTHERS
+/// rows for BOOKING_MANAGER users) — changing a user's role removes rows of the
+/// type the new role can't use, so no hidden access is left behind.
+enum PermissionType {
+  /// Manage the site: floors, editor, desks, restrictions, relevant users.
+  FACILITY_ADMIN
+  /// Book desks on behalf of other employees at the site (Booking Manager).
+  BOOK_FOR_OTHERS
+}
+
 enum FloorPlanVersionStatus {
   DRAFT
   LIVE
@@ -61,6 +72,23 @@ enum RestrictionOperator {
   IS_NOT
   IS_ANY_OF
   IS_NOT_ANY_OF
+  IS_EMPTY
+  IS_NOT_EMPTY
+}
+
+/// How a rule joins onto the rule before it. The first rule's connector is
+/// ignored. AND binds tighter than OR, so rules evaluate as OR-of-AND-groups.
+enum RuleConnector {
+  AND
+  OR
+}
+
+/// "Bookings restricted to" — who a desk restriction assignment admits.
+enum DeskRestrictionMode {
+  ANYONE
+  ASSIGNED_OCCUPANTS
+  DEPARTMENT
+  CUSTOM
 }
 
 enum DeskAssignmentMode {
@@ -103,21 +131,35 @@ model Organization {
   departments            Department[]
   bookingRestrictions    BookingRestriction[]
   availabilityShifts     AvailabilityShift[]
+  deskRestrictionAssignments DeskRestrictionAssignment[]
+  deskRestrictionOccupants DeskRestrictionOccupant[]
   deskAttributes         DeskAttribute[]
   siteOperatingHours     SiteOperatingHours[]
 
   @@map("organizations")
 }
 
+/// Employee identity/profile fields (email, names, title, department, location,
+/// employeeId, phone) are HRIS-owned and will be updated by the HRIS sync in a
+/// later phase. role, isActive and the Permission rows are application-owned
+/// and must never be touched by a sync.
 model User {
   id             String   @id @default(cuid())
   organizationId String? // null only for PLATFORM_ADMIN
   email          String
+  /// Display name — kept in sync with firstName + lastName on save.
   name           String
-  role           Role
+  firstName      String?
+  lastName       String?
+  /// Stable HRIS identifier — preferred match key for the upcoming sync.
+  employeeId     String?
+  title          String?
   department     String?
+  /// HRIS office/location label. Not a site permission — see Permission.
+  location       String?
   phone          String?
   timezone       String?
+  role           Role
   isActive       Boolean  @default(true)
   lastLoginAt    DateTime?
 
@@ -135,17 +177,25 @@ model User {
   auditLogs                AuditLog[]
   createdFloorPlanVersions FloorPlanVersion[]
   assignedDesks            Desk[]             @relation("AssignedOccupant")
+  deskRestrictionOccupants DeskRestrictionOccupant[]
 
   @@unique([organizationId, email])
+  @@unique([organizationId, employeeId])
+  @@index([organizationId, role])
+  @@index([organizationId, isActive])
   @@map("users")
 }
 
+/// A user's explicit, application-owned site scope. One row per user+site; the
+/// `type` says what the row grants there (see PermissionType). System Admins
+/// hold no rows — their role grants every site.
 model Permission {
-  id             String   @id @default(cuid())
+  id             String         @id @default(cuid())
   organizationId String
   userId         String
   siteId         String
-  createdAt      DateTime @default(now())
+  type           PermissionType
+  createdAt      DateTime       @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])
@@ -247,8 +297,12 @@ model Desk {
   isActive          Boolean             @default(true)
   requiresCheckIn   Boolean             @default(false)
   spaceType         String?
+  description       String?
   assignmentMode    DeskAssignmentMode  @default(BOOKABLE)
   assignedOccupantId String?
+  /// Set when an admin removes a desk that still has booking history — the
+  /// desk disappears from every map but its bookings stay auditable.
+  archivedAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -258,10 +312,11 @@ model Desk {
   assignedOccupant   User?               @relation("AssignedOccupant", fields: [assignedOccupantId], references: [id])
   bookings           Booking[]
   deskWatches        DeskWatch[]
-  availabilityShifts AvailabilityShift[]
+  restrictionAssignments DeskRestrictionAssignment[]
   attributes         DeskAttribute[]
 
   @@unique([floorId, number])
+  @@index([floorId, archivedAt])
   @@map("desks")
 }
 
@@ -393,65 +448,121 @@ model Department {
   organization Organization @relation(fields: [organizationId], references: [id])
 
   @@unique([organizationId, name])
+  @@index([organizationId])
   @@map("departments")
 }
 
-/// Reusable booking restriction rules — assigned to AvailabilityShifts.
-/// Example: "Editorial Only", "Credit & Equities Team", "Anyone".
+/// Reusable "custom restriction by employee field" — one record may be
+/// assigned to many desks through DeskRestrictionAssignment.
+/// Example: "Editorial Only", "Credit & Equities Team".
 model BookingRestriction {
   id             String   @id @default(cuid())
   organizationId String
   name           String
+  /// Display colour (CSS hex) used as a small visual indicator next to the name.
+  color          String?
   isActive       Boolean  @default(true)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   organization Organization    @relation(fields: [organizationId], references: [id])
   rules          RestrictionRule[]
-  availabilityShifts AvailabilityShift[]
+  deskAssignments DeskRestrictionAssignment[]
 
   @@unique([organizationId, name])
+  @@index([organizationId])
   @@map("booking_restrictions")
 }
 
-/// Individual rule within a BookingRestriction.
+/// Individual rule within a BookingRestriction, ordered by sortOrder.
 /// Example rule 1: Department IS ANY OF [Editorial, Editorial-Forum]
-/// Example rule 2: Email IS ANY OF [user@example.com]
-/// Linked by AND/OR logic stored in parent restriction (future: add logic field to rule).
+///         rule 2: OR Email IS ANY OF [user@example.com]
 model RestrictionRule {
   id                    String                @id @default(cuid())
   restrictionId         String
   fieldType             RestrictionFieldType
   operator              RestrictionOperator
-  value                 Json // array of strings or single string, depending on operator
+  value                 Json // array of strings (empty for IS_EMPTY / IS_NOT_EMPTY)
+  connector             RuleConnector         @default(OR)
+  sortOrder             Int                   @default(0)
   createdAt             DateTime              @default(now())
 
   restriction BookingRestriction @relation(fields: [restrictionId], references: [id], onDelete: Cascade)
 
+  @@index([restrictionId])
   @@map("restriction_rules")
 }
 
-/// Per-desk availability shift — defines when a desk is bookable and to whom.
-/// Example: Desk 5.52 on Mon/Wed is "Editorial Only", Tue/Thu is "Credit & Equities", Fri is "Anyone".
+/// Reusable, org-wide availability shift — a named set of weekdays such as
+/// "Mon + Fri" or "Wednesday Only". Referenced by DeskRestrictionAssignment.
 model AvailabilityShift {
-  id                    String   @id @default(cuid())
-  organizationId        String
-  deskId                String
-  restrictionId         String?  // null = no restriction (anyone can book)
-  name                  String?
-  daysOfWeek            Int[] // 0–6 (Sun–Sat); usually [1,2,3,4,5] for weekdays
-  advanceBookingWindowDays Int?  // max days in advance user can book (e.g. 30)
-  startTimeMinutes      Int?     // optional per-shift start time (minutes from midnight)
-  endTimeMinutes        Int?     // optional per-shift end time
-  isActive              Boolean  @default(true)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id               String   @id @default(cuid())
+  organizationId   String
+  name             String
+  daysOfWeek       Int[] // 0–6 (Sun–Sat)
+  startTimeMinutes Int?  // optional time-of-day window within the shift
+  endTimeMinutes   Int?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  organization  Organization         @relation(fields: [organizationId], references: [id])
-  desk          Desk                 @relation(fields: [deskId], references: [id], onDelete: Cascade)
-  restriction   BookingRestriction?  @relation(fields: [restrictionId], references: [id], onDelete: SetNull)
+  organization    Organization                @relation(fields: [organizationId], references: [id])
+  deskAssignments DeskRestrictionAssignment[]
 
+  @@unique([organizationId, name])
   @@map("availability_shifts")
+}
+
+/// One "restriction block" on a desk: who may book it, on which days (shift),
+/// and how far ahead. Who = the mode plus its target: CUSTOM → a reusable
+/// BookingRestriction, DEPARTMENT → departmentNames (matched against
+/// User.department), ASSIGNED_OCCUPANTS → occupants[]. A desk holds many —
+/// e.g. Mon–Wed three named people, Thu+Fri the Sales department.
+/// Shifts on the same desk must not overlap on any weekday (enforced in the
+/// desk router) so exactly one block applies to a given booking date.
+model DeskRestrictionAssignment {
+  id                       String              @id @default(cuid())
+  organizationId           String
+  deskId                   String
+  restrictionMode          DeskRestrictionMode @default(ANYONE)
+  restrictionId            String? // required when restrictionMode = CUSTOM
+  /// Department names admitted when restrictionMode = DEPARTMENT (HRIS-owned strings on User.department).
+  departmentNames          String[]            @default([])
+  shiftId                  String
+  advanceBookingWindowDays Int? // null = site/system default
+  sortOrder                Int                 @default(0)
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  organization Organization              @relation(fields: [organizationId], references: [id])
+  desk         Desk                      @relation(fields: [deskId], references: [id], onDelete: Cascade)
+  restriction  BookingRestriction?       @relation(fields: [restrictionId], references: [id], onDelete: SetNull)
+  shift        AvailabilityShift         @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  occupants    DeskRestrictionOccupant[]
+
+  @@index([organizationId])
+  @@index([deskId])
+  @@index([restrictionId])
+  @@index([shiftId])
+  @@map("desk_restriction_assignments")
+}
+
+/// The people admitted by an ASSIGNED_OCCUPANTS restriction block (up to a handful per block).
+model DeskRestrictionOccupant {
+  id             String   @id @default(cuid())
+  organizationId String
+  assignmentId   String
+  userId         String
+  createdAt      DateTime @default(now())
+
+  organization Organization              @relation(fields: [organizationId], references: [id])
+  assignment   DeskRestrictionAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user         User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("desk_restriction_occupants")
 }
 
 /// Desk attributes/features (e.g., standing desk, dual monitors, window seat).
@@ -466,6 +577,8 @@ model DeskAttribute {
   desk         Desk         @relation(fields: [deskId], references: [id], onDelete: Cascade)
 
   @@unique([deskId, type])
+  @@index([organizationId])
+  @@index([deskId])
   @@map("desk_attributes")
 }
 
@@ -483,5 +596,7 @@ model SiteOperatingHours {
   site         Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
   @@unique([siteId, dayOfWeek])
+  @@index([organizationId])
+  @@index([siteId])
   @@map("site_operating_hours")
 }

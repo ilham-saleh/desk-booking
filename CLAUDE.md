@@ -1,248 +1,932 @@
-# Desk Booking System — Project Guide (v2.2, Multi-Tenant SaaS)
+# CLAUDE.md
 
-Multi-tenant SaaS workplace desk booking platform hosting multiple **isolated customer
-companies ("organizations")**. Within an organization: employees find/book/cancel desks across
-sites and floors; org admins manage sites, floor plans, desks and users; **platform admins**
-manage the organizations themselves. Real-time availability, a check-in flow, and occupancy
-analytics. **Full requirements: `docs/Desk-Booking-System-Spec-v2.md` + `docs/spec-v2.2-addendum.md`
-— the addendum supersedes the base spec wherever they conflict (tenancy, SSO, floor-plan
-storage, phases).**
+## Purpose
 
-> Go-to-market: ship the app working for ONE company ("customer zero") through Phase 5, then
-> add the SaaS platform layer (Phases 7–8) before onboarding external customers.
-> **No AI assistant** and **no rules engine** — both deferred. Any bookable desk can be booked
-> by any employee **within its organization**. Keep the code clean enough to add AI later.
+This repository is an internal workplace desk-booking platform.
 
----
+Read `PROJECT_SPECS.md` before implementing product features. It is the main product and workflow specification.
 
-## Tech Stack (locked — do not substitute without asking)
+The existing application already contains basic desk booking, floor-map and upload functionality. Extend the existing codebase rather than recreating it.
 
-- **Framework:** Next.js (App Router) + React + TypeScript (strict)
-- **API layer:** tRPC (end-to-end typed)
-- **Auth:** Auth.js (NextAuth v5) — Google + Microsoft Entra ID, **per-organization SSO** (see rules)
-- **DB:** PostgreSQL + Prisma ORM
-- **Validation:** Zod (shared client/server; every mutation input is a Zod schema)
-- **UI:** Tailwind CSS + shadcn/ui
-- **Floor map:** react-konva (canvas)
-- **File storage:** behind a **swappable storage abstraction** — local volume in dev,
-  tenant-scoped S3-compatible object storage in production.
-- **Realtime availability:** Postgres `LISTEN/NOTIFY` → a small WebSocket server. *Display only —
-  never the source of truth for availability.* (Revisit a managed realtime service at scale.)
-- **Background jobs:** pg-boss (Postgres-backed queue — no Redis/extra service)
-- **Email:** Amazon SES (or Resend)
-- **Charts:** Recharts
-- **Deployment:** managed, scalable cloud infra (see Deployment). Docker Compose is fine for
-  local dev / customer-zero, but production SaaS is NOT a single VPS.
+The reference application/recordings are behavioural references only. Do not copy branding, proprietary text or visual design pixel-for-pixel.
 
-## Folder structure (conform to this)
+## Task Files
 
-```
-desk-booking/
-├── CLAUDE.md
-├── docs/
-│   ├── Desk-Booking-System-Spec-v2.md   # base specification
-│   ├── spec-v2.2-addendum.md            # SaaS changes (supersede base on conflict)
-│   └── floorplans/                       # Floor-2.pdf, Floor-4.pdf, Floor-5.pdf
-├── docker-compose.yml           # dev/customer-zero: app + postgres + ws server + worker
-├── Dockerfile
-├── prisma/
-│   ├── schema.prisma            # 14 core entities live here
-│   ├── migrations/
-│   └── seed.ts                  # customer-zero org: dummy users + sample sites/floors/desks
-├── src/
-│   ├── app/
-│   │   ├── (auth)/              # sign-in / org resolution
-│   │   ├── (app)/               # authenticated org shell: top bar + sidebar
-│   │   │   ├── home/            # dashboard
-│   │   │   ├── bookings/        # my bookings
-│   │   │   ├── book/            # book-a-desk flow
-│   │   │   ├── floor-map/       # viewer
-│   │   │   └── admin/           # ORG admins only, guarded by middleware
-│   │   │       ├── editor/      # editing platform (draft/live floor plans)
-│   │   │       ├── sites/       # facilities/sites
-│   │   │       └── users/       # user management (org-wide directory)
-│   │   ├── (platform)/          # PLATFORM admin only: manage organizations, onboarding
-│   │   └── api/
-│   │       ├── auth/[...nextauth]/
-│   │       └── trpc/[trpc]/
-│   ├── server/
-│   │   ├── api/
-│   │   │   ├── routers/         # one router per domain
-│   │   │   ├── trpc.ts          # context (incl. orgId), protected/siteAdmin/orgAdmin/platformAdmin procedures
-│   │   │   └── root.ts
-│   │   ├── auth/                # Auth.js config, per-org SSO resolution, session helpers
-│   │   ├── db/                  # Prisma client + tenant-scoping middleware
-│   │   ├── tenancy/             # org context, isolation guards
-│   │   ├── storage/             # file storage abstraction (local ↔ S3)
-│   │   ├── booking/             # booking + locking + one-active-booking + check-in logic
-│   │   ├── search/              # desk/people/booking search
-│   │   ├── notifications/       # create + dispatch (in-app + email)
-│   │   └── realtime/            # LISTEN/NOTIFY publisher
-│   ├── components/
-│   │   ├── ui/                  # shadcn
-│   │   ├── layout/              # TopBar, Sidebar
-│   │   ├── floor-map/           # Konva canvas + editor
-│   │   └── booking/
-│   ├── lib/                     # shared utils, Zod schemas
-│   └── hooks/
-├── realtime/                    # standalone WebSocket server (subscribes to NOTIFY)
-└── jobs/                        # pg-boss worker: reminders, check-in auto-cancel, watch alerts
-```
+Feature implementation tasks are stored in `/tasks`.
+
+When the user asks to work on a specific feature:
+
+1. Read `CLAUDE.md`.
+2. Read `PROJECT_SPECS.md`.
+3. Read the relevant file inside `/tasks`.
+4. Treat that task file as the current implementation scope.
+5. Do not implement unrelated tasks unless required as a dependency.
+6. Follow the implementation order and acceptance tests in the task file.
+7. Do not mark the task complete until its acceptance criteria are verified.
 
 ---
 
-## Architectural rules (non-negotiable)
+# 1. First Rule: Inspect Before Editing
 
-1. **TENANT ISOLATION IS THE #1 RULE.** Every tenant-owned entity has an `organizationId`, and
-   every query/mutation is scoped by it **centrally** (Prisma tenant-scoping middleware /
-   org-aware client + the tRPC context), never left to individual call sites. Organization A
-   must never read or affect Organization B's data. This MUST be covered by automated tests.
+Before implementing a requested feature:
 
-2. **Double-booking is prevented in the database, not app code.** No-overlap constraint per desk
-   (unique on `(deskId, date, timeSlot)` or a time-range exclusion constraint) plus a
-   serializable transaction / row lock. The realtime layer is display only.
+1. Inspect the relevant current code.
+2. Inspect the current database/schema.
+3. Inspect authentication and authorization.
+4. Inspect existing API routes/server actions.
+5. Inspect existing UI components that can be reused.
+6. Inspect package scripts and test setup.
+7. Identify the smallest safe implementation path.
 
-3. **Bookings are start–end time ranges on a single weekday.** Dropdown start/end; validate
-   end > start, within the site's operating hours, reject weekends. Store UTC; display in the
-   **site's time zone**.
+Do not assume framework/library choices.
 
-4. **One active booking per user.** No two *overlapping* bookings (different-day bookings are
-   fine). Admins are exempt and can book on behalf of others, incl. **guest bookings**
-   (nullable `guestName` + `bookedById`).
+The existing repository is the source of truth for:
 
-5. **Cancellation** allowed any time **before** start. Admins cancel any booking in their scope;
-   users only their own.
+- frontend framework
+- backend framework
+- ORM/query layer
+- database
+- authentication library
+- map/floor-plan rendering library
+- component library
+- test framework
 
-6. **Check-in with auto-cancel.** Desks have `requiresCheckIn`. If not checked in by **one hour
-   before start** (configurable), a pg-boss job auto-cancels, releases the desk, and notifies.
-
-7. **No rules engine.** Desks are simply active/bookable or not. No department/day/priority
-   restrictions. Eligibility = "desk is active and free for the slot" (within its org).
-
-8. **Floor map has draft vs live.** Admin edits mutate a `FloorPlanVersion` draft; Publish
-   promotes to live. Never edit live directly. Save/publish/rollback. Uploaded plans are
-   **tenant-scoped**, stored via the storage abstraction; **PDFs are rendered first-page → PNG**
-   for the canvas background.
-
-9. **Meeting rooms are map-only** — drawn, never bookable.
-
-10. **RBAC with FOUR roles, checked centrally.** `PLATFORM_ADMIN` (operates the SaaS, manages
-    organizations, belongs to no org), `ORG_SUPER_ADMIN` (top admin within one org),
-    `SITE_ADMIN` (scoped to assigned sites via `Permission`; can view the org-wide user
-    directory, manages desks/floors only for their sites), `STANDARD_USER`. Guard `/admin/*`,
-    `/(platform)/*`, and the matching tRPC procedures in middleware; always re-check org + site
-    scope on the server.
-
-11. **Per-organization SSO.** Each customer org connects its own IdP (Entra tenant / Google
-    Workspace domain). SSO **authenticates only**; the org's `User` table is the directory.
-    On sign-in, resolve the user to the correct org, then allow only if their email exists in
-    that org (reject unknown users). SSO settings live on the Organization, never hard-coded.
-
-12. **Users come from dummy seed data for now** (per org). HRIS auto-sync (per-org Google Sheet,
-    keyed on email, auto-deactivating leavers) is deferred — design for it, don't build it yet.
-
-13. **Audit everything sensitive** (desk create/edit/delete, floor-plan publish, booking cancel,
-    role change, org changes) via Prisma middleware → `AuditLog` (org-scoped).
-
-14. **Desk occupancy is intentionally visible within an org** (available/booked/scheduled + who
-    booked it). Accepted privacy choice — see the GDPR section of the spec.
-
-## Data model — 14 core entities
-**Organization**, User, Role, Permission, Site, Floor, FloorPlanVersion, Desk, Room (map-only),
-Utility, Booking, DeskWatch, Notification, AuditLog. Add `organizationId` FKs to all
-tenant-owned entities (Floor/Desk/Room/Utility inherit via Site). Model these first in
-`schema.prisma` before any feature code. (The v1 `Rule` entity is intentionally gone.)
-
-Booking status enum: CONFIRMED, CHECKED_IN, CANCELLED, AUTO_CANCELLED, COMPLETED.
-Desk map states: AVAILABLE, BOOKED, SCHEDULED, INACTIVE.
+Do not replace core libraries simply because another library would be easier.
 
 ---
 
-## Build phases (plan and execute one at a time — do NOT build everything at once)
+# 2. Do Not Rebuild Working Features
 
-Phases 0–5 build the tenant-aware app and ship it for **customer zero** (one org); isolation is
-enforced from the schema up even with a single tenant.
+Preserve existing working functionality unless the task explicitly requires changing it.
 
-- **Phase 0 — Scaffold:** ✅ complete. Next.js + TS + Tailwind + shadcn, tRPC, Prisma, Docker
-  skeleton, `.env.example`, lint/format.
-- **Phase 1 — Data + auth:** full `schema.prisma` (**14 entities**, `organizationId` scoping +
-  tenant middleware), migrations, dummy seed for customer-zero, Auth.js (Google + Entra),
-  RBAC middleware (**four roles** + site-scoped permissions).
-- **Phase 2 — Core booking:** floor-map viewer, desk info panel, both booking flows, DB-level
-  no-double-booking, one-active-booking, weekday/time validation, cancellation. **Seed
-  `docs/floorplans/Floor-2/4/5.pdf` (rasterized, with placed desks) under customer-zero** so
-  booking has real maps.
-- **Phase 3 — Check-in:** check-in flow, per-desk toggle, auto-cancel pg-boss job.
-- **Phase 4 — Admin:** sites/floors management, floor-map **upload UI + PDF→PNG conversion**,
-  draft/live editor, bulk edit, org-wide user management, audit logs.
-- **Phase 5 — Notifications + watch + analytics:** in-app + email, reminders, desk watch,
-  occupancy dashboards (use check-in data for actual attendance).
-- **Phase 6 (optional/deferred):** per-org HRIS Google-Sheet sync; optional AI assistant.
-- **Phase 7 — SaaS platform layer:** Platform Admin area, organization onboarding/provisioning,
-  per-org SSO configuration, and the **tenant-isolation test suite**.
-- **Phase 8 — SaaS readiness:** move to managed/scalable hosting, monitoring, per-tenant
-  backups, billing (if commercial), compliance groundwork (GDPR DPAs, SOC 2 prep).
+Especially avoid unnecessary rewrites of:
 
-Pause for review (open a PR) at the end of each phase.
+- current booking flow
+- current floor map
+- authentication/session handling
+- floor-plan rendering
+- existing database entities
+- navigation shell
+- design system
+
+Prefer incremental extension.
+
+If an existing implementation is flawed, explain the specific problem and make the smallest justified correction.
 
 ---
 
-## Deployment
+# 3. Work in Vertical Slices
 
-- **Dev / customer-zero:** Docker Compose (app + Postgres + WS server + pg-boss worker) behind
-  Caddy is fine.
-- **Production SaaS (Phase 8):** managed, scalable infra — managed Postgres with automated
-  point-in-time backups, container hosting that scales, tenant-scoped S3-compatible object
-  storage for floor plans, a CDN, and a secrets manager. Design for no single point of failure.
-- **Security & compliance (first-class scope, not polish):** as a **GDPR data processor** for
-  customers you need per-customer Data Processing Agreements, per-tenant retention/erasure, and
-  a path to **SOC 2** for enterprise sales. Hardened tenant isolation + security review.
-- **Backups:** automated and **tested** (verify restores) — per tenant where applicable.
-- Target: responsive web (desktop + mobile browser). No native app.
+Do not attempt the whole product in one uncontrolled change.
 
-## Commands
-```
-npm run dev              # start dev server
-npx prisma migrate dev   # apply schema changes
-npx prisma db seed       # seed customer-zero dummy data
-npm run typecheck
-npm run lint
-docker compose up -d     # run full stack locally
+For each request, implement the requested workflow end-to-end.
+
+Example desk-management slice:
+
+```text
+DB/schema
+→ API/server mutation
+→ authorization
+→ UI
+→ persistence
+→ refresh/reload test
+→ normal Floor Map integration
 ```
 
-## Conventions
-- TypeScript strict. No `any`.
-- All tRPC mutation inputs validated with Zod; reuse schemas on the client.
-- Server-only logic stays in `src/server/**`, `realtime/**`, `jobs/**`; never import into client components.
-- Every server data path goes through the tenant-scoped client — no raw un-scoped Prisma queries.
-- Keep components small; colocate feature UI under `components/<domain>/`.
+A visible button with no backend behaviour is not progress.
+
+Do not move to unrelated features until the current slice works.
 
 ---
 
-## Git & GitHub workflow (follow this every phase)
+# 4. Plans Are Not the Deliverable
 
-**Remote:** the project's GitHub repo. `main` is always working/deployable.
+When the user asks for implementation:
 
-**Branch per phase.** Never commit feature work directly to `main`.
+- give a short inspection summary if useful
+- state the files/models you will touch
+- then implement
+
+Do not stop after writing a long plan unless the user explicitly asks only for a plan.
+
+---
+
+# 5. Product Source of Truth
+
+Use `PROJECT_SPECS.md` for intended product behaviour.
+
+If the current implementation conflicts with it:
+
+1. Preserve data and working functionality where possible.
+2. Implement toward the specification incrementally.
+3. Do not silently invent new product behaviour.
+4. If a true ambiguity blocks safe implementation, ask one focused question.
+
+Do not treat screenshot sample names, dates, people or departments as production seed data.
+
+---
+
+# 6. Roles
+
+Core roles:
+
+```text
+SYSTEM_ADMIN
+FACILITY_ADMIN
+BOOKING_MANAGER
+STANDARD_USER
 ```
-git checkout -b phase/<n>-<slug>     # e.g. phase/1-data-auth
+
+Use an inactive/no-access account state separately when appropriate.
+
+Do not reproduce the many roles seen in the reference application unless explicitly requested.
+
+---
+
+# 7. Authorization Is Server-Side
+
+Never treat hidden navigation as authorization.
+
+All protected actions must validate the actor on the server.
+
+Use centralized reusable authorization helpers where practical:
+
+```text
+canManageSite(actor, site)
+canManageFloor(actor, floor)
+canEditDesk(actor, desk)
+canManageUser(actor, target)
+canBookForUser(actor, occupant)
+canCancelBooking(actor, booking)
 ```
 
-**Commit conventions:** Conventional Commits — `feat:`, `fix:`, `chore:`, `refactor:`,
-`docs:`, `test:`. Short imperative subject (~50 chars). Small logical commits, not one giant
-commit per phase.
+Use these checks for:
 
-**When to commit:** after each logical unit that typechecks/lints clean. Always at end of phase.
-Run `npm run typecheck && npm run lint` before committing.
+- page/server loaders
+- APIs
+- server actions
+- mutations
+- batch actions
 
-**End of each phase:**
+Never trust:
+
+- role sent by client
+- user ID sent by client
+- site/floor scope sent by client
+
+Resolve permissions from the authenticated session and database.
+
+---
+
+# 8. Authentication
+
+Desired authentication:
+
+1. Microsoft Entra ID as primary SSO
+2. Company email/password for pre-provisioned employees
+
+Important rules:
+
+- company-isolated access
+- no public signup
+- user should already exist in employee directory
+- map Entra identity to internal User
+- disabled users cannot authenticate
+- application roles remain app-managed
+- Entra authentication does not imply admin access
+
+If authentication is not yet fully implemented, do not fake it. Add it incrementally and keep development access explicit.
+
+---
+
+# 9. HRIS Data Ownership
+
+Employee data is synced from HRIS exports/data sheets.
+
+HRIS-owned fields may include:
+
+- employee ID
+- name
+- work email
+- department
+- title
+- phone
+- manager
+- office/location
+- employment status
+
+Application-owned fields include:
+
+- role
+- site permissions
+- floor permissions
+- delegation settings
+- application preferences
+
+A sync must not overwrite app-owned permissions.
+
+Prefer stable employee ID over email for matching.
+
+Never create duplicate employees because their work email changed when a stable HRIS ID exists.
+
+---
+
+# 10. Database Changes
+
+Before adding a new table/model:
+
+1. Search for an existing equivalent.
+2. Reuse/extend it when appropriate.
+3. Avoid parallel duplicate concepts.
+
+Migrations should be:
+
+- additive where possible
+- data-safe
+- reversible when practical
+- small enough to review
+
+Do not delete existing production-like data just to make a migration easy.
+
+Do not reset the database unless explicitly authorized.
+
+---
+
+# 11. Core Domain Relationships
+
+Keep these relationships conceptually intact, adapting names to the existing schema:
+
+```text
+Site
+└── Floor
+    ├── FloorPlan
+    ├── Desk
+    ├── Utility
+    ├── RoomSpace
+    ├── Neighborhood
+    └── FloorLabel
 ```
-git push -u origin phase/<n>-<slug>
-gh pr create --fill --base main        # PR for human review
-```
-Then STOP and wait for review/merge before the next phase.
 
-**Hard rules:**
-- NEVER commit secrets. `.env*` (except `.env.example`) must be in `.gitignore`.
-- Never `git push --force` to `main` or a shared branch. Never rewrite pushed history.
-- Ask before deleting branches or resetting. Prompt for confirmation before each commit.
+Booking domain:
+
+```text
+Desk
+├── Booking[]
+└── DeskRestrictionAssignment[]
+    ├── BookingRestriction
+    ├── AvailabilityShift
+    └── AdvanceBookingWindow
+```
+
+People domain:
+
+```text
+User
+├── Department
+├── Site permissions
+├── Floor permissions
+└── Delegate assignments
+```
+
+Do not simplify desk restrictions to one `department` string on Desk.
+
+---
+
+# 12. Desk Coordinates
+
+Map object positions must persist in a floor-plan coordinate system.
+
+Prefer normalized coordinates or another stable model:
+
+```text
+x: 0..1
+y: 0..1
+```
+
+Do not persist only viewport pixel positions.
+
+Coordinate behaviour must survive:
+
+- browser resize
+- refresh
+- floor switching
+- map zoom/pan
+
+If using a canvas/SVG/map library, convert correctly between viewport and floor-plan coordinates.
+
+---
+
+# 13. Floor Plan Editing
+
+Editing Platform is admin functionality.
+
+Normal Floor Map is employee functionality.
+
+Do not leak editing behaviours into Floor Map.
+
+Editing Platform may support:
+
+- create
+- select
+- drag/reposition
+- edit
+- delete
+
+Normal Floor Map supports:
+
+- select
+- inspect
+- book
+
+Keep these interaction modes separate.
+
+---
+
+# 14. Creating Desks
+
+Preferred flow:
+
+```text
+Editor Tools
+→ Seats
+→ Create
+→ placement cursor
+→ click floor
+→ desk created
+→ edit modal opens
+```
+
+Acceptable fallback:
+
+```text
+Create
+→ desk appears at map centre
+→ admin drags it
+→ edit modal opens
+```
+
+Never require an admin to type coordinates manually.
+
+Persist the desk and its coordinates.
+
+---
+
+# 15. Deleting Desks
+
+Always confirm deletion.
+
+If future bookings exist:
+
+- do not silently hard-delete them
+- block deletion, archive/deactivate, or use an explicit admin cancellation flow
+
+Retain booking/audit history.
+
+---
+
+# 16. Desk Edit Modal
+
+The edit modal should support the product behaviour described in `PROJECT_SPECS.md`.
+
+Core information:
+
+- name
+- active/inactive
+- assignment mode
+- description
+- department if applicable
+- space type
+- check-in setting
+- assets
+- attributes
+- booking restrictions
+- availability shifts
+- advance booking window
+
+Use the existing component system.
+
+Do not build a static mock.
+
+Save must persist.
+
+---
+
+# 17. Reusable Booking Restrictions
+
+Restrictions are first-class reusable records.
+
+Do not duplicate full rule JSON on every desk unless the existing data model requires a transitional compatibility layer.
+
+Support rule fields such as:
+
+```text
+Department
+Email
+User
+JobTitle
+```
+
+Support operators such as:
+
+```text
+is
+is not
+is any of
+is not any of
+is empty
+is not empty
+```
+
+Support AND/OR connectors.
+
+Use real employee/department data in selectors.
+
+---
+
+# 18. Restriction Evaluation
+
+Restriction evaluation must be centralized.
+
+Do not reimplement different logic in:
+
+- Floor Map
+- Book a Desk
+- booking API
+- admin preview
+
+Create one domain/service function and reuse it.
+
+Conceptually:
+
+```text
+evaluateDeskEligibility({
+  actor,
+  occupant,
+  desk,
+  site,
+  startAt,
+  endAt
+})
+```
+
+It should determine:
+
+- applicable shift
+- applicable restriction
+- whether occupant matches
+- advance-window validity
+- site/floor access
+- operating-hours validity
+
+The server is authoritative.
+
+The UI may call the same logic or a read-only eligibility endpoint to explain results.
+
+---
+
+# 19. Occupant vs Booking Creator
+
+Never conflate:
+
+```text
+occupantUserId
+createdByUserId
+```
+
+For self-booking they may be equal.
+
+For delegated booking they differ.
+
+All restriction checks use the **occupant**.
+
+Audit information uses the creator.
+
+---
+
+# 20. Availability Shifts
+
+A desk can have multiple restriction/shift assignments.
+
+Example:
+
+```text
+Mon + Fri → Anyone
+Tue       → Anyone
+Wed       → Technology
+Thu       → Global Client Services
+```
+
+Model this with a relation such as:
+
+```text
+DeskRestrictionAssignment
+```
+
+Do not store a single permanent restriction on Desk.
+
+Detect and prevent ambiguous overlapping shift assignments for the same day/time unless the product explicitly defines precedence.
+
+---
+
+# 21. Timezones
+
+Use site timezone as the authority for workplace rules.
+
+Do not calculate day-of-week restrictions solely using browser timezone.
+
+Persist timestamps consistently and convert intentionally.
+
+A London desk booked at 09:00 London time must remain a London 09:00 booking regardless of the viewer's local timezone.
+
+---
+
+# 22. Booking Conflict Safety
+
+Availability displayed in the UI is not sufficient.
+
+Booking creation must re-check conflicts on the server immediately before write.
+
+Use a transaction.
+
+Use database constraints or locking strategies available in the current stack where appropriate.
+
+Never rely on "it looked available when the page loaded."
+
+---
+
+# 23. Booking Errors
+
+Return actionable domain messages.
+
+Good:
+
+```text
+This desk is restricted to Technology on Wednesdays.
+```
+
+Good:
+
+```text
+Desk 4.45 is already booked from 09:00 to 17:00.
+```
+
+Bad:
+
+```text
+Something went wrong.
+```
+
+Do not expose raw database errors to users.
+
+---
+
+# 24. Users Page
+
+Use one combined Users area.
+
+The Users area should combine:
+
+- HRIS employee data (columns such as name, email, title, department, location and additionally role and permission data columns which are created in the app by admin not from HRIS)
+- search/filter
+- employee detail
+- application role
+- site/floor permissions
+- delegation
+- booking context
+- last login/activity
+
+HRIS-owned fields should generally be read-only in normal admin editing.
+
+---
+
+# 25. Home Page Scope
+
+Do not add:
+
+- announcements
+- second floor map
+- full analytics dashboard
+
+Home should remain useful and light:
+
+- greeting
+- current/next booking
+- Book a Desk CTA
+- optional booking summary
+
+---
+
+# 26. Out-of-Scope Modules
+
+Unless specifically requested, do not implement reference-product modules such as:
+
+- announcements
+- visitor management
+- move management
+- request subscriptions/general request manager
+- large reporting/analytics platform
+- mobile app
+
+Do not let reference screenshots expand scope automatically.
+
+---
+
+# 27. UI Rules
+
+Use the existing application's visual language.
+
+Functional reference behaviours are important:
+
+- right-side desk detail panel
+- large desk edit modal
+- searchable dropdowns
+- restriction management modal
+- rule builder
+- shift dropdown
+- editor sidebar
+
+But do not make a pixel-perfect clone.
+
+Requirements:
+
+- responsive where practical
+- keyboard-accessible controls
+- labels for inputs
+- visible loading states
+- visible validation
+- confirmation for destructive actions
+- do not rely only on colour for state
+
+---
+
+# 28. Persistence Rule
+
+No important feature is complete if refresh loses it.
+
+Persistent items include:
+
+- sites
+- floors
+- floor-plan references
+- desks
+- desk positions
+- desk status
+- restrictions
+- restriction rules
+- shifts
+- desk restriction assignments
+- bookings
+- user roles
+- floor permissions
+- delegation
+
+Do not use local component state or localStorage as the source of truth for these unless the repository's architecture explicitly requires a temporary client cache on top of server persistence.
+
+---
+
+# 29. No Fake Data in Production Paths
+
+Do not:
+
+- hardcode reference employee names
+- hardcode reference departments
+- hardcode desk restriction results
+- return fake successful API responses
+- show fake matching-record counts
+- create UI-only buttons
+
+Seed/demo fixtures are acceptable only in clearly separated development/test data.
+
+---
+
+# 30. Testing Expectations
+
+After each feature, run the relevant repository checks.
+
+Discover commands from package scripts/config.
+
+Typical categories:
+
+- typecheck
+- lint
+- unit tests
+- integration tests
+- build
+
+Do not invent commands without checking the repo.
+
+Critical domain tests should cover:
+
+- standard user cannot access admin route
+- Facility Admin cannot edit another site
+- desk position persists
+- overlapping booking rejected
+- restriction selects correct shift
+- eligible department allowed
+- ineligible department rejected
+- Booking Manager validation uses occupant
+- standard user cannot cancel another user's booking
+- HRIS sync preserves app role/permissions
+
+---
+
+# 31. Manual Acceptance Checks
+
+For map/editor features, automated tests alone are not enough.
+
+Verify the actual user flow:
+
+```text
+Editing Platform
+→ site
+→ floor
+→ map loads
+→ create desk
+→ drag desk
+→ save
+→ refresh
+→ desk remains
+→ edit restrictions
+→ save
+→ Floor Map
+→ select same desk
+→ restrictions appear
+```
+
+If a browser automation environment exists in the repo, use it.
+
+Otherwise document exactly what was verified programmatically and what still needs manual browser verification.
+
+Do not claim manual verification that did not happen.
+
+---
+
+# 32. Error Handling
+
+Handle:
+
+- missing site
+- missing floor
+- floor with no plan
+- failed upload
+- invalid coordinates
+- duplicate desk name
+- deleted/inactive desk
+- stale edit
+- restriction deleted while assigned
+- malformed HRIS row
+- unauthorized mutation
+- booking collision
+- timezone conversion failure
+
+Show user-safe messages and log useful server diagnostics.
+
+---
+
+# 33. Destructive Operations
+
+Use confirmations for:
+
+- deleting desk
+- deleting floor
+- deleting site
+- deleting restriction
+- deactivating user where consequences exist
+- replacing floor plan when object alignment may be affected
+
+Where dependent records exist, prefer safe blocking/archive behaviour over cascading destruction.
+
+---
+
+# 34. Performance
+
+Avoid loading the entire company employee directory into every page.
+
+Use:
+
+- server-side filtering/search
+- pagination/virtualization where needed
+- targeted floor queries
+- indexes on booking time ranges, floor IDs and user IDs
+- debounced searchable selects
+
+Floor Map should load only the selected floor's relevant map data.
+
+---
+
+# 35. Security
+
+Never expose secrets to client bundles.
+
+Validate file uploads by:
+
+- type
+- size
+- safe storage path
+- authorization
+
+Sanitize/validate free text displayed back in UI.
+
+Use parameterized ORM/query operations.
+
+Apply CSRF protections appropriate to the framework/session model.
+
+Do not log passwords, tokens or full authentication secrets.
+
+---
+
+# 36. HRIS Import Safety
+
+HRIS import must not be an unrestricted file-to-database overwrite.
+
+Use:
+
+```text
+parse
+→ validate
+→ preview/diff
+→ apply
+→ report
+```
+
+Log import summary.
+
+Do not silently remove users.
+
+A user disappearing from one partial spreadsheet must not automatically be deleted.
+
+---
+
+# 37. Entra Integration Safety
+
+When implementing Entra:
+
+- tenant ID must be configured server-side
+- validate issuer/audience
+- map stable Entra object ID when available
+- verify employee exists/allowed
+- do not derive application admin role from arbitrary Entra claims unless explicitly configured
+- keep logout/session expiry correct
+
+---
+
+# 38. Documentation
+
+When a feature materially changes architecture:
+
+- update relevant project documentation
+- keep `PROJECT_SPECS.md` aligned with agreed product behaviour
+- keep comments focused on non-obvious logic
+
+Do not write huge comments that duplicate obvious code.
+
+---
+
+# 39. Definition of Done
+
+Do not mark a task done because:
+
+- component renders
+- button exists
+- mock data displays
+- API returns 200 in one happy path
+
+A feature is done when relevant items below are true:
+
+- end-to-end workflow works
+- server authorization exists
+- data persists
+- refresh preserves state
+- domain validation is correct
+- errors are understandable
+- tests pass
+- existing related features still work
+- no fake production data was introduced
+- schema/API/UI agree
+- acceptance case has been verified
+
+---
+
+# 40. Default Development Behaviour
+
+When working on a task:
+
+1. Read the task.
+2. Read relevant sections of `PROJECT_SPECS.md`.
+3. Inspect existing implementation.
+4. State a concise change plan.
+5. Implement the smallest complete vertical slice.
+6. Run tests/checks.
+7. Fix failures introduced by the change.
+8. Summarize:
+   - what changed
+   - files changed
+   - migrations
+   - tests run
+   - any remaining manual verification
+
+Do not broaden scope without necessity.
+
+Do not "clean up" unrelated code during feature work.
+
+Do not rewrite the project architecture unless there is a concrete blocking reason.

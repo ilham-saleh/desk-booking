@@ -4,286 +4,169 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Menu,
-  ChevronDown,
-  Plus,
-  Edit2,
-  Trash2,
-  MousePointer2,
-  Grid3x3,
-  Home,
-} from "lucide-react";
+import { Menu, ChevronDown, Plus, Edit2, Trash2, MousePointer2, Grid3x3, Home } from "lucide-react";
 
-type ObjectType = "desks" | "utilities" | "rooms" | null;
-type ActionType = "create" | "edit" | "delete" | null;
-type EditorTab = "multi-select" | "seats" | "utilities" | "neighbourhoods" | "rooms";
+export type EditorObjectType = "desks" | "utilities" | "rooms" | null;
+export type EditorAction = "create" | "edit" | "delete" | null;
+/** Select = navigate/inspect only; Edit = create, drag, edit, delete. Kept separate so nothing moves by accident. */
+export type EditorMode = "select" | "edit";
 
 interface EditorLayoutProps {
   floorName: string;
   children: React.ReactNode;
-  activeObjectType?: ObjectType;
-  onObjectTypeChange?: (type: ObjectType) => void;
-  activeAction?: ActionType;
-  onActionChange?: (action: ActionType) => void;
+  mode: EditorMode;
+  onModeChange: (mode: EditorMode) => void;
+  activeObjectType: EditorObjectType;
+  activeAction: EditorAction;
+  /** Sidebar tool clicks — the page decides what they do given the current selection. */
+  onToolAction: (objectType: Exclude<EditorObjectType, null>, action: Exclude<EditorAction, null>) => void;
+  /** Label of the currently selected object (e.g. "Desk 2.21"), for the sidebar status card. */
+  selectionLabel: string | null;
+  onClearSelection: () => void;
+  hasFloorPlan: boolean;
 }
 
 export function EditorLayout({
   floorName,
   children,
-  activeObjectType = null,
-  onObjectTypeChange,
-  activeAction = null,
-  onActionChange,
+  mode,
+  onModeChange,
+  activeObjectType,
+  activeAction,
+  onToolAction,
+  selectionLabel,
+  onClearSelection,
+  hasFloorPlan,
 }: EditorLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<EditorTab>("multi-select");
-  const [showEditorMenu, setShowEditorMenu] = useState(false);
-  // activeAction is used in the JSX for conditional styling
+  const [showEditorMenu, setShowEditorMenu] = useState(true);
+
+  const toolButton = (
+    objectType: Exclude<EditorObjectType, null>,
+    action: Exclude<EditorAction, null>,
+    label: string,
+    Icon: typeof Plus,
+  ) => (
+    <Button
+      variant={activeObjectType === objectType && activeAction === action ? "default" : "ghost"}
+      size="sm"
+      className="w-full justify-start text-xs"
+      aria-pressed={activeObjectType === objectType && activeAction === action}
+      onClick={() => onToolAction(objectType, action)}
+    >
+      <Icon className="mr-2 h-3 w-3" /> {label}
+    </Button>
+  );
 
   return (
     <div className="flex h-full bg-gray-50">
-      {/* Left Sidebar */}
-      <div
-        className={`border-r bg-white transition-all duration-200 ${
-          sidebarOpen ? "w-64" : "w-16"
-        } flex flex-col`}
-      >
-        {/* Sidebar Header */}
-        <div className="p-4 border-b">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="w-full justify-start"
-          >
+      {/* Left Sidebar — Editor Tools */}
+      <div className={`flex flex-col border-r bg-white transition-all duration-200 ${sidebarOpen ? "w-64" : "w-16"}`}>
+        <div className="border-b p-4">
+          <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(!sidebarOpen)} className="w-full justify-start" aria-expanded={sidebarOpen}>
             <Menu className="h-4 w-4" />
             {sidebarOpen && <span className="ml-2">Editor Tools</span>}
           </Button>
         </div>
 
-        {/* Sidebar Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {sidebarOpen && (
             <>
-              {/* Tools Tabs */}
-              <Tabs
-                value={activeTab}
-                onValueChange={(v) => {
-                  setActiveTab(v as EditorTab);
-                  setShowEditorMenu(false);
-                }}
-              >
+              <Tabs value={mode} onValueChange={(v) => onModeChange(v as EditorMode)}>
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="multi-select" className="flex items-center gap-2">
+                  <TabsTrigger value="select" className="flex items-center gap-2">
                     <MousePointer2 className="h-4 w-4" />
-                    <span className="hidden sm:inline text-xs">Select</span>
+                    <span className="text-xs">Select</span>
                   </TabsTrigger>
-                  <TabsTrigger value="seats" className="flex items-center gap-2">
+                  <TabsTrigger value="edit" className="flex items-center gap-2">
                     <Grid3x3 className="h-4 w-4" />
-                    <span className="hidden sm:inline text-xs">Edit</span>
+                    <span className="text-xs">Edit</span>
                   </TabsTrigger>
                 </TabsList>
 
-                {/* Multi-Select Tab */}
-                <TabsContent value="multi-select" className="space-y-2 mt-4">
+                {/* Select mode */}
+                <TabsContent value="select" className="mt-4 space-y-2">
                   <Card>
-                    <CardContent className="pt-6 space-y-2">
-                      <p className="text-sm text-gray-600">
-                        Hold Shift and drag to select multiple desks
-                      </p>
-                      <Button size="sm" className="w-full">
+                    <CardContent className="space-y-2 pt-6">
+                      <p className="text-sm text-gray-600">Click a desk to inspect it. Nothing can be moved in Select mode.</p>
+                      <p className="text-sm font-medium">{selectionLabel ?? "No selection"}</p>
+                      <Button size="sm" variant="outline" className="w-full" onClick={onClearSelection} disabled={!selectionLabel}>
                         Clear Selection
                       </Button>
                     </CardContent>
                   </Card>
                 </TabsContent>
 
-                {/* Editors Tab */}
-                <TabsContent value="seats" className="space-y-2 mt-4">
+                {/* Edit mode — Editors */}
+                <TabsContent value="edit" className="mt-4 space-y-2">
                   <Card>
-                    <CardContent className="pt-6 space-y-2">
-                      {/* Editors Menu Toggle */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowEditorMenu(!showEditorMenu)}
-                        className="w-full justify-between"
-                      >
+                    <CardContent className="space-y-2 pt-6">
+                      <Button variant="outline" size="sm" onClick={() => setShowEditorMenu(!showEditorMenu)} className="w-full justify-between" aria-expanded={showEditorMenu}>
                         <span>Editors</span>
-                        <ChevronDown
-                          className={`h-4 w-4 transition-transform ${
-                            showEditorMenu ? "rotate-180" : ""
-                          }`}
-                        />
+                        <ChevronDown className={`h-4 w-4 transition-transform ${showEditorMenu ? "rotate-180" : ""}`} />
                       </Button>
 
-                      {/* Editors Sub-Menu */}
                       {showEditorMenu && (
-                        <div className="space-y-2 pt-2 border-t">
-                          {/* Seats */}
+                        <div className="space-y-2 border-t pt-2">
                           <div className="space-y-1">
-                            <p className="text-xs font-semibold text-gray-600 px-2">Seats</p>
+                            <p className="px-2 text-xs font-semibold text-gray-600">Seats</p>
                             <div className="space-y-1">
-                              <Button
-                                variant={activeObjectType === "desks" && activeAction === "create" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("desks");
-                                  onActionChange?.("create");
-                                }}
-                              >
-                                <Plus className="h-3 w-3 mr-2" /> Create
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "desks" && activeAction === "edit" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("desks");
-                                  onActionChange?.("edit");
-                                }}
-                              >
-                                <Edit2 className="h-3 w-3 mr-2" /> Edit
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "desks" && activeAction === "delete" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("desks");
-                                  onActionChange?.("delete");
-                                }}
-                              >
-                                <Trash2 className="h-3 w-3 mr-2" /> Delete
-                              </Button>
+                              {toolButton("desks", "create", "Create", Plus)}
+                              {toolButton("desks", "edit", "Edit", Edit2)}
+                              {toolButton("desks", "delete", "Delete", Trash2)}
                             </div>
                           </div>
 
-                          {/* Utilities */}
                           <div className="space-y-1 border-t pt-2">
-                            <p className="text-xs font-semibold text-gray-600 px-2">Utilities</p>
+                            <p className="px-2 text-xs font-semibold text-gray-600">Utilities</p>
                             <div className="space-y-1">
-                              <Button
-                                variant={activeObjectType === "utilities" && activeAction === "create" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("utilities");
-                                  onActionChange?.("create");
-                                }}
-                              >
-                                <Plus className="h-3 w-3 mr-2" /> Create
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "utilities" && activeAction === "edit" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("utilities");
-                                  onActionChange?.("edit");
-                                }}
-                              >
-                                <Edit2 className="h-3 w-3 mr-2" /> Edit
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "utilities" && activeAction === "delete" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("utilities");
-                                  onActionChange?.("delete");
-                                }}
-                              >
-                                <Trash2 className="h-3 w-3 mr-2" /> Delete
-                              </Button>
+                              {toolButton("utilities", "create", "Create", Plus)}
+                              {toolButton("utilities", "delete", "Delete", Trash2)}
                             </div>
                           </div>
 
-                          {/* Neighbourhoods */}
                           <div className="space-y-1 border-t pt-2">
-                            <p className="text-xs font-semibold text-gray-600 px-2">
-                              Neighbourhoods
-                            </p>
-                            <div className="space-y-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                              >
-                                <Plus className="h-3 w-3 mr-2" /> Create
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                              >
-                                <Edit2 className="h-3 w-3 mr-2" /> Edit
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                              >
-                                <Trash2 className="h-3 w-3 mr-2" /> Delete
-                              </Button>
-                            </div>
+                            <p className="px-2 text-xs font-semibold text-gray-600">Neighbourhoods</p>
+                            <p className="px-2 text-xs text-gray-400">Not available yet</p>
                           </div>
 
-                          {/* Rooms & Spaces */}
                           <div className="space-y-1 border-t pt-2">
-                            <p className="text-xs font-semibold text-gray-600 px-2">
-                              Rooms & Spaces
-                            </p>
+                            <p className="px-2 text-xs font-semibold text-gray-600">Rooms &amp; Spaces</p>
                             <div className="space-y-1">
-                              <Button
-                                variant={activeObjectType === "rooms" && activeAction === "create" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("rooms");
-                                  onActionChange?.("create");
-                                }}
-                              >
-                                <Home className="h-3 w-3 mr-2" /> Create
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "rooms" && activeAction === "edit" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("rooms");
-                                  onActionChange?.("edit");
-                                }}
-                              >
-                                <Edit2 className="h-3 w-3 mr-2" /> Edit
-                              </Button>
-                              <Button
-                                variant={activeObjectType === "rooms" && activeAction === "delete" ? "default" : "ghost"}
-                                size="sm"
-                                className="w-full justify-start text-xs"
-                                onClick={() => {
-                                  onObjectTypeChange?.("rooms");
-                                  onActionChange?.("delete");
-                                }}
-                              >
-                                <Trash2 className="h-3 w-3 mr-2" /> Delete
-                              </Button>
+                              {toolButton("rooms", "create", "Create", Home)}
+                              {toolButton("rooms", "delete", "Delete", Trash2)}
                             </div>
                           </div>
                         </div>
                       )}
                     </CardContent>
                   </Card>
+
+                  <Card>
+                    <CardContent className="space-y-2 pt-4">
+                      <p className="text-xs text-gray-600">Selected</p>
+                      <p className="text-sm font-medium">{selectionLabel ?? "Nothing selected"}</p>
+                      {selectionLabel && (
+                        <Button size="sm" variant="outline" className="w-full" onClick={onClearSelection}>
+                          Clear Selection
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
                 </TabsContent>
               </Tabs>
 
-              {/* Info Card */}
-              <Card className="bg-blue-50 border-blue-200">
+              <Card className="border-blue-200 bg-blue-50">
                 <CardContent className="pt-4">
                   <p className="text-xs text-blue-700">
-                    <strong>Tip:</strong> Upload a floor plan to get started editing
+                    <strong>Tip:</strong>{" "}
+                    {!hasFloorPlan
+                      ? "Upload a floor plan below the map to get started."
+                      : mode === "select"
+                        ? "Switch to Edit to create, move or delete desks."
+                        : activeAction === "create" && activeObjectType === "desks"
+                          ? "Click anywhere on the floor plan to place the new desk. Press Esc to cancel."
+                          : "Drag a desk to move it (saved on drop). Double-click a desk to edit it."}
                   </p>
                 </CardContent>
               </Card>
@@ -293,7 +176,7 @@ export function EditorLayout({
       </div>
 
       {/* Main Editor Area */}
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className="border-b bg-white p-4">
           <h2 className="font-semibold">{floorName} Editor</h2>
         </div>

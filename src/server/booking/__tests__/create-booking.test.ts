@@ -92,7 +92,7 @@ describe("booking.create / booking.cancel", () => {
     const siteAdminRow = await db.user.create({
       data: { organizationId: orgA.id, email: "admin@a.test", name: "Site Admin", role: Role.SITE_ADMIN },
     });
-    await db.permission.create({ data: { organizationId: orgA.id, userId: siteAdminRow.id, siteId: siteA.id } });
+    await db.permission.create({ data: { organizationId: orgA.id, userId: siteAdminRow.id, siteId: siteA.id, type: "FACILITY_ADMIN" } });
 
     standardUser = { id: standardUserRow.id, name: standardUserRow.name, email: standardUserRow.email, role: standardUserRow.role, organizationId: orgA.id };
     standardUser2 = { id: standardUser2Row.id, name: standardUser2Row.name, email: standardUser2Row.email, role: standardUser2Row.role, organizationId: orgA.id };

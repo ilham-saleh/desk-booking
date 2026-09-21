@@ -57,7 +57,7 @@ describe("booking.endBooking", () => {
     const adminRow = await db.user.create({
       data: { organizationId: org.id, email: "admin@end-booking.test", name: "Site Admin", role: Role.SITE_ADMIN },
     });
-    await db.permission.create({ data: { organizationId: org.id, userId: adminRow.id, siteId: site.id } });
+    await db.permission.create({ data: { organizationId: org.id, userId: adminRow.id, siteId: site.id, type: "FACILITY_ADMIN" } });
 
     user = { id: userRow.id, name: userRow.name, email: userRow.email, role: userRow.role, organizationId: org.id };
     otherUser = { id: otherRow.id, name: otherRow.name, email: otherRow.email, role: otherRow.role, organizationId: org.id };

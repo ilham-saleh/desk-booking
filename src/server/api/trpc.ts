@@ -5,6 +5,7 @@ import superjson from "superjson";
 import { flattenError, ZodError } from "zod";
 
 import { auth } from "@/server/auth";
+import { canManageSite } from "@/server/auth/authorization";
 import { isOrgSuperAdmin, isPlatformAdmin, isSiteAdminRole, isBookingManagerRole, type Session } from "@/server/auth/roles";
 import { db } from "@/server/db";
 import { getScopedDb, type ScopedDb } from "@/server/tenancy";
@@ -49,12 +50,19 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
  * organization (rejects PLATFORM_ADMIN, who belongs to none) and swaps
  * `ctx.db` for the tenant-scoped client — see src/server/db/tenant-scope.ts.
  */
-export const orgProcedure = protectedProcedure.use(({ ctx, next }) => {
+export const orgProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const { organizationId } = ctx.session.user;
   if (!organizationId) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
-  return next({ ctx: { ...ctx, db: getScopedDb(ctx.db, organizationId), organizationId } });
+  const db = getScopedDb(ctx.db, organizationId);
+  // Sessions are JWTs, so a user removed from the system (isActive = false)
+  // would otherwise keep working until the token expires. Re-check per call.
+  const account = await db.user.findUnique({ where: { id: ctx.session.user.id }, select: { isActive: true } });
+  if (!account?.isActive) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Your account no longer has access to the desk-booking system." });
+  }
+  return next({ ctx: { ...ctx, db, organizationId } });
 });
 
 /**
@@ -103,18 +111,17 @@ export const bookingManagerProcedure = orgProcedure.use(({ ctx, next }) => {
   return next({ ctx });
 });
 
-/** Call inside a siteAdminProcedure/facilityAdminProcedure handler once the target siteId is known. */
+/**
+ * Call inside a siteAdminProcedure/facilityAdminProcedure handler once the
+ * target siteId is known. Delegates to the shared `canManageSite` helper —
+ * a Facility Admin needs a FACILITY_ADMIN permission row for that site.
+ */
 export async function assertSiteAdmin(
   ctx: { db: ScopedDb; session: Session },
   siteId: string,
 ): Promise<void> {
-  if (isOrgSuperAdmin(ctx.session)) return;
-
-  const permission = await ctx.db.permission.findUnique({
-    where: { userId_siteId: { userId: ctx.session.user.id, siteId } },
-  });
-  if (!permission) {
-    throw new TRPCError({ code: "FORBIDDEN" });
+  if (!(await canManageSite(ctx, siteId))) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "You don't manage this site." });
   }
 }
 

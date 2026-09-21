@@ -9,7 +9,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { createTRPCRouter, orgProcedure, siteAdminProcedure, orgAdminProcedure, assertSiteAdmin } from "@/server/api/trpc";
-import { isOrgSuperAdmin } from "@/server/auth/roles";
+import { getManagedSiteIds } from "@/server/auth/authorization";
 import {
   facilityCreateInputSchema,
   type FacilityCreateInput,
@@ -29,8 +29,9 @@ export const facilityRouter = createTRPCRouter({
    * FACILITY_ADMIN: only assigned sites
    */
   list: siteAdminProcedure.query(async ({ ctx }) => {
-    // If org super admin, return all sites; otherwise only those with permissions
-    if (isOrgSuperAdmin(ctx.session)) {
+    // System Admin: every site. Facility Admin: only sites they hold a FACILITY_ADMIN permission for.
+    const managed = await getManagedSiteIds(ctx);
+    if (managed === null) {
       return ctx.db.site.findMany({
         where: { organizationId: ctx.organizationId },
         include: {
@@ -41,17 +42,10 @@ export const facilityRouter = createTRPCRouter({
       });
     }
 
-    // Facility admin: return only sites they have permission for
-    const permissions = await ctx.db.permission.findMany({
-      where: { userId: ctx.session.user.id },
-      select: { siteId: true },
-    });
-    const siteIds = permissions.map((p) => p.siteId);
-
-    if (siteIds.length === 0) return [];
+    if (managed.size === 0) return [];
 
     return ctx.db.site.findMany({
-      where: { organizationId: ctx.organizationId, id: { in: siteIds } },
+      where: { organizationId: ctx.organizationId, id: { in: [...managed] } },
       include: {
         _count: { select: { floors: true } },
         operatingHours: { orderBy: { dayOfWeek: "asc" } },

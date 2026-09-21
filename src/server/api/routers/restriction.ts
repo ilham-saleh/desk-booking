@@ -1,6 +1,8 @@
 /**
- * Booking restrictions and departments router — reusable restriction groups
- * and per-desk availability shifts with multi-day/multi-restriction support.
+ * Booking restrictions and departments router — reusable "custom restriction
+ * by employee field" records (name, colour, ordered AND/OR rules) that many
+ * desks share through DeskRestrictionAssignment, plus the department list the
+ * rule builder and desk department selector draw from.
  */
 
 import "server-only";
@@ -19,6 +21,8 @@ import {
   restrictionUpdateInputSchema,
   type RestrictionUpdateInput,
 } from "@/lib/schemas/restriction";
+import { matchesRules } from "@/lib/restrictions";
+import type { ScopedDb } from "@/server/tenancy";
 
 // Re-export for backward compatibility
 export {
@@ -32,224 +36,238 @@ export {
   type RestrictionUpdateInput,
 };
 
+const rulesInclude = { rules: { orderBy: { sortOrder: "asc" as const } } } as const;
+
+/** Distinct desks / floors each restriction is assigned to — for "assigned to 12 desks" warnings. */
+async function usageByRestriction(db: ScopedDb, restrictionIds: string[]) {
+  if (restrictionIds.length === 0) return new Map<string, { deskCount: number; floorCount: number }>();
+  const rows = await db.deskRestrictionAssignment.findMany({
+    where: { restrictionId: { in: restrictionIds }, desk: { archivedAt: null } },
+    select: { restrictionId: true, deskId: true, desk: { select: { floorId: true } } },
+  });
+  const usage = new Map<string, { desks: Set<string>; floors: Set<string> }>();
+  for (const row of rows) {
+    const entry = usage.get(row.restrictionId!) ?? { desks: new Set<string>(), floors: new Set<string>() };
+    entry.desks.add(row.deskId);
+    entry.floors.add(row.desk.floorId);
+    usage.set(row.restrictionId!, entry);
+  }
+  return new Map([...usage.entries()].map(([id, u]) => [id, { deskCount: u.desks.size, floorCount: u.floors.size }]));
+}
+
+function rulesToCreateData(rules: RestrictionRuleInput[]) {
+  return rules.map((rule, index) => ({
+    fieldType: rule.fieldType,
+    operator: rule.operator,
+    value: rule.operator === "IS_EMPTY" || rule.operator === "IS_NOT_EMPTY" ? [] : rule.value,
+    connector: rule.connector,
+    sortOrder: index,
+  }));
+}
+
 export const restrictionRouter = createTRPCRouter({
   // ===== DEPARTMENTS =====
 
-  /**
-   * List all departments in the organization.
-   */
+  /** Managed department records (used by the desk Department selector). */
   listDepartments: orgProcedure.query(({ ctx }) =>
     ctx.db.department.findMany({
-      where: { organizationId: ctx.organizationId, isActive: true },
+      where: { isActive: true },
       orderBy: { name: "asc" },
     }),
   ),
 
   /**
-   * Create a new department.
-   * FACILITY_ADMIN or higher.
+   * Department names for restriction rules and department blocks — exactly the
+   * departments that exist on employee records (HRIS-owned, as shown on the
+   * Users page), so a rule can never target a department nobody belongs to.
    */
-  createDepartment: siteAdminProcedure
-    .input(departmentCreateInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Check if department already exists
-      const existing = await ctx.db.department.findFirst({
-        where: { organizationId: ctx.organizationId, name: input.name },
-      });
-      if (existing) {
-        throw new TRPCError({ code: "CONFLICT", message: "Department already exists" });
-      }
+  listDepartmentOptions: orgProcedure.query(async ({ ctx }) => {
+    const users = await ctx.db.user.findMany({
+      where: { department: { not: null }, isActive: true },
+      select: { department: true },
+      distinct: ["department"],
+    });
+    const names = new Set<string>();
+    for (const u of users) if (u.department && u.department.trim().length > 0) names.add(u.department.trim());
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }),
 
-      const department = await ctx.db.department.create({
-        data: {
-          organizationId: ctx.organizationId,
-          name: input.name,
-        },
-      });
+  createDepartment: siteAdminProcedure.input(departmentCreateInputSchema).mutation(async ({ ctx, input }) => {
+    const existing = await ctx.db.department.findFirst({ where: { name: input.name } });
+    if (existing) throw new TRPCError({ code: "CONFLICT", message: "Department already exists" });
 
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "CREATE",
-          targetType: "Department",
-          targetId: department.id,
-          after: { name: department.name },
-        },
-      });
+    const department = await ctx.db.department.create({
+      data: { organizationId: ctx.organizationId, name: input.name },
+    });
 
-      return department;
-    }),
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "CREATE",
+        targetType: "Department",
+        targetId: department.id,
+        after: { name: department.name },
+      },
+    });
 
-  /**
-   * Delete a department (soft-delete via isActive = false).
-   * FACILITY_ADMIN or higher.
-   */
-  deleteDepartment: siteAdminProcedure
-    .input(z.object({ departmentId: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const department = await ctx.db.department.findUnique({ where: { id: input.departmentId } });
-      if (!department) throw new TRPCError({ code: "NOT_FOUND" });
+    return department;
+  }),
 
-      await ctx.db.department.update({
-        where: { id: input.departmentId },
-        data: { isActive: false },
-      });
+  deleteDepartment: siteAdminProcedure.input(z.object({ departmentId: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+    const department = await ctx.db.department.findFirst({ where: { id: input.departmentId } });
+    if (!department) throw new TRPCError({ code: "NOT_FOUND" });
 
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "DELETE",
-          targetType: "Department",
-          targetId: department.id,
-          before: { name: department.name },
-        },
-      });
-    }),
+    await ctx.db.department.update({ where: { id: input.departmentId }, data: { isActive: false } });
+
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "DELETE",
+        targetType: "Department",
+        targetId: department.id,
+        before: { name: department.name },
+      },
+    });
+  }),
 
   // ===== BOOKING RESTRICTIONS =====
 
-  /**
-   * List all booking restrictions in the organization.
-   */
-  listRestrictions: orgProcedure.query(({ ctx }) =>
-    ctx.db.bookingRestriction.findMany({
-      where: { organizationId: ctx.organizationId, isActive: true },
-      include: { rules: true },
+  /** All active restrictions with ordered rules and how many desks/floors use each. */
+  listRestrictions: orgProcedure.query(async ({ ctx }) => {
+    const restrictions = await ctx.db.bookingRestriction.findMany({
+      where: { isActive: true },
+      include: rulesInclude,
       orderBy: { name: "asc" },
-    }),
-  ),
+    });
+    const usage = await usageByRestriction(ctx.db, restrictions.map((r) => r.id));
+    return restrictions.map((restriction) => ({
+      ...restriction,
+      deskCount: usage.get(restriction.id)?.deskCount ?? 0,
+      floorCount: usage.get(restriction.id)?.floorCount ?? 0,
+    }));
+  }),
 
-  /**
-   * Get a single restriction with its rules.
-   */
-  getRestriction: orgProcedure
-    .input(z.object({ restrictionId: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
-      const restriction = await ctx.db.bookingRestriction.findUnique({
-        where: { id: input.restrictionId },
-        include: { rules: true },
-      });
-      if (!restriction) throw new TRPCError({ code: "NOT_FOUND" });
-      return restriction;
-    }),
+  getRestriction: orgProcedure.input(z.object({ restrictionId: z.string().min(1) })).query(async ({ ctx, input }) => {
+    const restriction = await ctx.db.bookingRestriction.findFirst({
+      where: { id: input.restrictionId },
+      include: rulesInclude,
+    });
+    if (!restriction) throw new TRPCError({ code: "NOT_FOUND", message: "Restriction not found." });
+    const usage = await usageByRestriction(ctx.db, [restriction.id]);
+    return { ...restriction, deskCount: usage.get(restriction.id)?.deskCount ?? 0, floorCount: usage.get(restriction.id)?.floorCount ?? 0 };
+  }),
 
-  /**
-   * Create a new booking restriction.
-   * FACILITY_ADMIN or higher.
-   */
-  createRestriction: siteAdminProcedure
-    .input(restrictionCreateInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      // Check if restriction with this name already exists
-      const existing = await ctx.db.bookingRestriction.findFirst({
-        where: { organizationId: ctx.organizationId, name: input.name },
-      });
-      if (existing) {
-        throw new TRPCError({ code: "CONFLICT", message: "Restriction already exists" });
-      }
+  createRestriction: siteAdminProcedure.input(restrictionCreateInputSchema).mutation(async ({ ctx, input }) => {
+    // Names are unique per org including soft-deleted rows, so a deleted
+    // restriction with the same name is revived rather than duplicated.
+    const existing = await ctx.db.bookingRestriction.findFirst({
+      where: { name: { equals: input.name, mode: "insensitive" } },
+    });
+    if (existing?.isActive) throw new TRPCError({ code: "CONFLICT", message: `A restriction named "${input.name}" already exists.` });
 
-      const restriction = await ctx.db.bookingRestriction.create({
-        data: {
-          organizationId: ctx.organizationId,
-          name: input.name,
-          rules: input.rules
-            ? {
-                create: input.rules.map((rule) => ({
-                  fieldType: rule.fieldType,
-                  operator: rule.operator,
-                  value: Array.isArray(rule.value) ? rule.value : [rule.value],
-                })),
-              }
-            : undefined,
-        },
-        include: { rules: true },
-      });
+    const restriction = existing
+      ? await ctx.db.$transaction(async (tx) => {
+          await tx.restrictionRule.deleteMany({ where: { restrictionId: existing.id } });
+          return tx.bookingRestriction.update({
+            where: { id: existing.id },
+            data: { name: input.name, color: input.color ?? null, isActive: true, rules: { create: rulesToCreateData(input.rules) } },
+            include: rulesInclude,
+          });
+        })
+      : await ctx.db.bookingRestriction.create({
+          data: {
+            organizationId: ctx.organizationId,
+            name: input.name,
+            color: input.color ?? null,
+            rules: { create: rulesToCreateData(input.rules) },
+          },
+          include: rulesInclude,
+        });
 
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "CREATE",
-          targetType: "BookingRestriction",
-          targetId: restriction.id,
-          after: { name: restriction.name, ruleCount: restriction.rules.length },
-        },
-      });
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "CREATE",
+        targetType: "BookingRestriction",
+        targetId: restriction.id,
+        after: { name: restriction.name, color: restriction.color, ruleCount: restriction.rules.length },
+      },
+    });
 
-      return restriction;
-    }),
+    return restriction;
+  }),
 
-  /**
-   * Update a booking restriction (name + rules).
-   * FACILITY_ADMIN or higher.
-   */
-  updateRestriction: siteAdminProcedure
-    .input(restrictionUpdateInputSchema)
-    .mutation(async ({ ctx, input }) => {
-      const restriction = await ctx.db.bookingRestriction.findUnique({
-        where: { id: input.restrictionId },
-      });
-      if (!restriction) throw new TRPCError({ code: "NOT_FOUND" });
+  /** Replace name, colour and the whole rule list. Desks assigned to it pick the change up immediately. */
+  updateRestriction: siteAdminProcedure.input(restrictionUpdateInputSchema).mutation(async ({ ctx, input }) => {
+    const restriction = await ctx.db.bookingRestriction.findFirst({
+      where: { id: input.restrictionId, isActive: true },
+      include: rulesInclude,
+    });
+    if (!restriction) throw new TRPCError({ code: "NOT_FOUND", message: "Restriction not found." });
 
-      // Delete old rules, create new ones
-      await ctx.db.restrictionRule.deleteMany({ where: { restrictionId: input.restrictionId } });
+    const clash = await ctx.db.bookingRestriction.findFirst({
+      where: { id: { not: restriction.id }, name: { equals: input.name, mode: "insensitive" } },
+    });
+    if (clash?.isActive) throw new TRPCError({ code: "CONFLICT", message: `A restriction named "${input.name}" already exists.` });
 
-      const updated = await ctx.db.bookingRestriction.update({
-        where: { id: input.restrictionId },
+    const updated = await ctx.db.$transaction(async (tx) => {
+      // A soft-deleted restriction holding this name is fully detached (its blocks were removed on delete) — clear it so the rename can proceed.
+      if (clash) await tx.bookingRestriction.delete({ where: { id: clash.id } });
+      await tx.restrictionRule.deleteMany({ where: { restrictionId: restriction.id } });
+      return tx.bookingRestriction.update({
+        where: { id: restriction.id },
         data: {
           name: input.name,
-          rules: input.rules
-            ? {
-                create: input.rules.map((rule) => ({
-                  fieldType: rule.fieldType,
-                  operator: rule.operator,
-                  value: Array.isArray(rule.value) ? rule.value : [rule.value],
-                })),
-              }
-            : undefined,
+          color: input.color ?? null,
+          rules: { create: rulesToCreateData(input.rules) },
         },
-        include: { rules: true },
+        include: rulesInclude,
       });
+    });
 
-      // Audit log
-      await ctx.db.auditLog.create({
-        data: {
-          organizationId: ctx.organizationId,
-          actorId: ctx.session.user.id,
-          action: "UPDATE",
-          targetType: "BookingRestriction",
-          targetId: restriction.id,
-          before: { name: restriction.name },
-          after: { name: updated.name, ruleCount: updated.rules.length },
-        },
-      });
+    await ctx.db.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.session.user.id,
+        action: "UPDATE",
+        targetType: "BookingRestriction",
+        targetId: restriction.id,
+        before: { name: restriction.name, ruleCount: restriction.rules.length },
+        after: { name: updated.name, color: updated.color, ruleCount: updated.rules.length },
+      },
+    });
 
-      return updated;
-    }),
+    return updated;
+  }),
 
   /**
-   * Delete a booking restriction (soft-delete via isActive = false).
-   * FACILITY_ADMIN or higher.
+   * Soft-delete a restriction. When desks still use it the call is refused
+   * with the count unless `force` is set — the UI shows that count in its
+   * confirmation and, on confirm, the dependent restriction blocks are removed
+   * from those desks too (never left dangling).
    */
   deleteRestriction: siteAdminProcedure
-    .input(z.object({ restrictionId: z.string().min(1) }))
+    .input(z.object({ restrictionId: z.string().min(1), force: z.boolean().default(false) }))
     .mutation(async ({ ctx, input }) => {
-      const restriction = await ctx.db.bookingRestriction.findUnique({
-        where: { id: input.restrictionId },
-      });
-      if (!restriction) throw new TRPCError({ code: "NOT_FOUND" });
+      const restriction = await ctx.db.bookingRestriction.findFirst({ where: { id: input.restrictionId, isActive: true } });
+      if (!restriction) throw new TRPCError({ code: "NOT_FOUND", message: "Restriction not found." });
 
-      await ctx.db.bookingRestriction.update({
-        where: { id: input.restrictionId },
-        data: { isActive: false },
+      const usage = (await usageByRestriction(ctx.db, [restriction.id])).get(restriction.id) ?? { deskCount: 0, floorCount: 0 };
+      if (usage.deskCount > 0 && !input.force) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: `This restriction is currently assigned to ${usage.deskCount} desk${usage.deskCount === 1 ? "" : "s"}. Confirm to remove it from those desks as well.`,
+        });
+      }
+
+      await ctx.db.$transaction(async (tx) => {
+        await tx.deskRestrictionAssignment.deleteMany({ where: { restrictionId: restriction.id } });
+        await tx.bookingRestriction.update({ where: { id: restriction.id }, data: { isActive: false } });
       });
 
-      // Audit log
       await ctx.db.auditLog.create({
         data: {
           organizationId: ctx.organizationId,
@@ -257,64 +275,27 @@ export const restrictionRouter = createTRPCRouter({
           action: "DELETE",
           targetType: "BookingRestriction",
           targetId: restriction.id,
-          before: { name: restriction.name },
+          before: { name: restriction.name, removedFromDesks: usage.deskCount },
         },
       });
+
+      return { removedFromDesks: usage.deskCount };
     }),
 
   /**
-   * Validate if a user matches a restriction.
-   * Used to check booking eligibility (occupant against desk restriction).
+   * Live "N employee records match these rules" for the rule builder —
+   * computed against real active employees with the same matcher booking
+   * validation uses. Never a fake number.
    */
-  validateUserAgainstRestriction: orgProcedure
-    .input(
-      z.object({
-        userId: z.string().min(1),
-        restrictionId: z.string().min(1),
-      }),
-    )
+  previewMatchCount: siteAdminProcedure
+    .input(z.object({ rules: z.array(restrictionRuleSchema).max(50) }))
     .query(async ({ ctx, input }) => {
-      const user = await ctx.db.user.findUnique({ where: { id: input.userId } });
-      const restriction = await ctx.db.bookingRestriction.findUnique({
-        where: { id: input.restrictionId },
-        include: { rules: true },
+      const employees = await ctx.db.user.findMany({
+        where: { isActive: true },
+        select: { id: true, email: true, department: true },
       });
-
-      if (!user || !restriction) return { matches: false, reason: "User or restriction not found" };
-
-      // If no rules, everyone matches
-      if (restriction.rules.length === 0) return { matches: true, reason: "No restrictions" };
-
-      // Evaluate each rule
-      for (const rule of restriction.rules) {
-        const ruleValues = Array.isArray(rule.value) ? rule.value : [rule.value];
-        let ruleMatches = false;
-
-        switch (rule.fieldType) {
-          case "DEPARTMENT":
-            ruleMatches = ruleValues.includes(user.department || "");
-            break;
-          case "EMAIL":
-            ruleMatches = ruleValues.includes(user.email);
-            break;
-          case "USER":
-            ruleMatches = ruleValues.includes(user.id);
-            break;
-        }
-
-        // Apply operator logic
-        if (rule.operator.startsWith("IS_NOT")) {
-          ruleMatches = !ruleMatches;
-        }
-
-        // For now, treat rules as OR (any rule matching = eligible)
-        // TODO: support AND/OR logic per restriction
-        if (ruleMatches) return { matches: true, reason: "Matches restriction" };
-      }
-
-      return {
-        matches: false,
-        reason: `User does not match restriction (department: ${user.department || "none"})`,
-      };
+      const rules = input.rules.map((rule, index) => ({ ...rule, sortOrder: index }));
+      const matching = employees.filter((employee) => matchesRules(rules, employee)).length;
+      return { matching, total: employees.length };
     }),
 });

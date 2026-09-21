@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Role } from "@/generated/prisma/enums";
+import type { Role } from "@/generated/prisma/enums";
+import { canBookForOthersRole } from "@/lib/roles";
 import { buildTimeOptions, formatMinutesLabel, todayInTimeZone } from "@/lib/time-slots";
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,8 @@ import { BookingSubjectFields, type BookingSubjectMode } from "@/components/book
 import { FloorCanvas, type FloorCanvasDesk } from "@/components/floor-map/floor-canvas";
 
 export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
-  const isAdmin = currentUserRole === Role.SITE_ADMIN || currentUserRole === Role.ORG_SUPER_ADMIN;
+  // Display gate only — booking.create enforces per-site "book for others" permission.
+  const isAdmin = canBookForOthersRole(currentUserRole);
   const sites = api.site.list.useQuery();
   const orgUsers = api.user.listActive.useQuery(undefined, { enabled: isAdmin });
 
@@ -56,6 +58,7 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
       requiresCheckIn: desk.requiresCheckIn,
       state: live?.state ?? "INACTIVE",
       freeForRequestedSlot: live?.freeForRequestedSlot,
+      eligibleForViewer: live?.eligibleForViewer,
     };
   });
   const selectedDesk = floor.data?.desks.find((d) => d.id === selectedDeskId);

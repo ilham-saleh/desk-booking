@@ -42,36 +42,66 @@ async function main() {
     });
   }
 
+  // Dev fixtures only. Profile fields (names, title, location) mimic what the
+  // HRIS sync will provide; role/permissions are the app-owned part.
   const orgSuperAdmin = await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "ilhamsaleh.nabijonov@thirdbridge.com" } },
-    update: {},
+    update: { firstName: "Ilham", lastName: "Nabijonov", title: "Engineering Manager", location: "London" },
     create: {
       organizationId: org.id,
       email: "ilhamsaleh.nabijonov@thirdbridge.com",
       name: "Ilham Nabijonov",
+      firstName: "Ilham",
+      lastName: "Nabijonov",
+      title: "Engineering Manager",
+      location: "London",
       role: Role.ORG_SUPER_ADMIN,
     },
   });
 
   const siteAdmin = await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "site.admin@thirdbridge.com" } },
-    update: {},
+    update: { firstName: "Sam", lastName: "Site-Admin", title: "Facilities Coordinator", location: "London" },
     create: {
       organizationId: org.id,
       email: "site.admin@thirdbridge.com",
       name: "Sam Site-Admin",
+      firstName: "Sam",
+      lastName: "Site-Admin",
+      title: "Facilities Coordinator",
+      location: "London",
       role: Role.SITE_ADMIN,
       department: "Facilities",
     },
   });
 
+  const bookingManager = await db.user.upsert({
+    where: { organizationId_email: { organizationId: org.id, email: "booking.manager@thirdbridge.com" } },
+    update: { firstName: "Morgan", lastName: "Manager", title: "Team Assistant", location: "London" },
+    create: {
+      organizationId: org.id,
+      email: "booking.manager@thirdbridge.com",
+      name: "Morgan Manager",
+      firstName: "Morgan",
+      lastName: "Manager",
+      title: "Team Assistant",
+      location: "London",
+      role: Role.BOOKING_MANAGER,
+      department: "Operations",
+    },
+  });
+
   await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "standard.one@thirdbridge.com" } },
-    update: {},
+    update: { firstName: "Riley", lastName: "Employee", title: "Software Engineer", location: "London" },
     create: {
       organizationId: org.id,
       email: "standard.one@thirdbridge.com",
       name: "Riley Employee",
+      firstName: "Riley",
+      lastName: "Employee",
+      title: "Software Engineer",
+      location: "London",
       role: Role.STANDARD_USER,
       department: "Engineering",
     },
@@ -79,11 +109,15 @@ async function main() {
 
   await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "standard.two@thirdbridge.com" } },
-    update: {},
+    update: { firstName: "Jordan", lastName: "Employee", title: "Account Executive", location: "New York" },
     create: {
       organizationId: org.id,
       email: "standard.two@thirdbridge.com",
       name: "Jordan Employee",
+      firstName: "Jordan",
+      lastName: "Employee",
+      title: "Account Executive",
+      location: "New York",
       role: Role.STANDARD_USER,
       department: "Sales",
     },
@@ -111,14 +145,32 @@ async function main() {
     },
   });
 
+  // A second site so site-scoped permissions have something to be scoped against.
+  const secondSite =
+    (await db.site.findFirst({ where: { organizationId: org.id, name: "New York" } })) ??
+    (await db.site.create({
+      data: {
+        organizationId: org.id,
+        name: "New York",
+        address: "100 Example Avenue, New York",
+        city: "New York",
+        country: "United States",
+        description: "US office",
+        timeZone: "America/New_York",
+        operatingHoursStart: 420,
+        operatingHoursEnd: 1080,
+      },
+    }));
+
   await db.permission.upsert({
     where: { userId_siteId: { userId: siteAdmin.id, siteId: site.id } },
-    update: {},
-    create: {
-      organizationId: org.id,
-      userId: siteAdmin.id,
-      siteId: site.id,
-    },
+    update: { type: "FACILITY_ADMIN" },
+    create: { organizationId: org.id, userId: siteAdmin.id, siteId: site.id, type: "FACILITY_ADMIN" },
+  });
+  await db.permission.upsert({
+    where: { userId_siteId: { userId: bookingManager.id, siteId: site.id } },
+    update: { type: "BOOK_FOR_OTHERS" },
+    create: { organizationId: org.id, userId: bookingManager.id, siteId: site.id, type: "BOOK_FOR_OTHERS" },
   });
 
   const floors = await seedFloorPlans(org.id, site.id, orgSuperAdmin.id);
@@ -126,6 +178,7 @@ async function main() {
   await seedDepartmentsAndRestrictions(org.id);
   await seedAvailabilityShifts(org.id);
   await seedOperatingHours(site.id, org.id);
+  await seedOperatingHours(secondSite.id, org.id);
 
   console.log("Seeded customer-zero:", {
     organization: org.slug,
@@ -245,18 +298,13 @@ async function seedDepartmentsAndRestrictions(organizationId: string) {
     // "Engineering Only" restriction
     await db.bookingRestriction.upsert({
       where: { organizationId_name: { organizationId, name: "Engineering Only" } },
-      update: {},
+      update: { color: "#2563eb" },
       create: {
         organizationId,
         name: "Engineering Only",
+        color: "#2563eb",
         rules: {
-          create: [
-            {
-              fieldType: "DEPARTMENT",
-              operator: "IS_ANY_OF",
-              value: [engineeringDept.name],
-            },
-          ],
+          create: [{ fieldType: "DEPARTMENT", operator: "IS_ANY_OF", value: [engineeringDept.name], connector: "OR", sortOrder: 0 }],
         },
       },
     });
@@ -264,66 +312,76 @@ async function seedDepartmentsAndRestrictions(organizationId: string) {
     // "Sales Team" restriction
     await db.bookingRestriction.upsert({
       where: { organizationId_name: { organizationId, name: "Sales Team" } },
-      update: {},
+      update: { color: "#dc2626" },
       create: {
         organizationId,
         name: "Sales Team",
+        color: "#dc2626",
         rules: {
-          create: [
-            {
-              fieldType: "DEPARTMENT",
-              operator: "IS_ANY_OF",
-              value: [salesDept.name],
-            },
-          ],
+          create: [{ fieldType: "DEPARTMENT", operator: "IS_ANY_OF", value: [salesDept.name], connector: "OR", sortOrder: 0 }],
         },
-      },
-    });
-
-    // "Anyone" restriction (no rules = open to all)
-    await db.bookingRestriction.upsert({
-      where: { organizationId_name: { organizationId, name: "Anyone" } },
-      update: {},
-      create: {
-        organizationId,
-        name: "Anyone",
       },
     });
   }
 }
 
 /**
- * Seeds availability shifts for desks (e.g., desk is available Mon-Fri to all employees).
+ * Seeds the reusable availability shifts (named weekday sets) and gives the
+ * first few desks a "different restriction on different days" configuration
+ * so the Editing Platform / Floor Map have something to show.
  */
 async function seedAvailabilityShifts(organizationId: string) {
-  const desks = await db.desk.findMany({ where: { organizationId } });
+  const shiftSeeds: Array<{ name: string; daysOfWeek: number[] }> = [
+    { name: "Mon–Fri", daysOfWeek: [1, 2, 3, 4, 5] },
+    { name: "Monday Only", daysOfWeek: [1] },
+    { name: "Tuesday Only", daysOfWeek: [2] },
+    { name: "Wednesday Only", daysOfWeek: [3] },
+    { name: "Thursday Only", daysOfWeek: [4] },
+    { name: "Friday Only", daysOfWeek: [5] },
+    { name: "Mon + Fri", daysOfWeek: [1, 5] },
+    { name: "Mon & Wed", daysOfWeek: [1, 3] },
+    { name: "Tue & Thu", daysOfWeek: [2, 4] },
+    { name: "Mon through Thu", daysOfWeek: [1, 2, 3, 4] },
+  ];
 
-  const anyoneRestriction = await db.bookingRestriction.findFirst({
-    where: { organizationId, name: "Anyone" },
+  const shifts = new Map<string, string>();
+  for (const seed of shiftSeeds) {
+    const shift = await db.availabilityShift.upsert({
+      where: { organizationId_name: { organizationId, name: seed.name } },
+      update: { daysOfWeek: seed.daysOfWeek, isActive: true },
+      create: { organizationId, name: seed.name, daysOfWeek: seed.daysOfWeek },
+    });
+    shifts.set(seed.name, shift.id);
+  }
+
+  const engineering = await db.bookingRestriction.findUnique({
+    where: { organizationId_name: { organizationId, name: "Engineering Only" } },
+  });
+  const sales = await db.bookingRestriction.findUnique({
+    where: { organizationId_name: { organizationId, name: "Sales Team" } },
   });
 
-  if (!anyoneRestriction) return;
+  // Only touch desks that have no restriction blocks yet — never overwrite admin edits.
+  const desks = await db.desk.findMany({
+    where: { organizationId, archivedAt: null, restrictionAssignments: { none: {} } },
+    orderBy: { number: "asc" },
+    take: 3,
+  });
 
-  // For now, create a simple "Weekday 9-5" shift for all desks (skip if already exists)
-  for (const desk of desks.slice(0, 5)) {
-    const existing = await db.availabilityShift.findFirst({
-      where: { deskId: desk.id, name: "Weekday 9-5" },
+  for (const [index, desk] of desks.entries()) {
+    const blocks =
+      index === 0 && engineering && sales
+        ? [
+            { restrictionMode: "ANYONE" as const, restrictionId: null, shiftId: shifts.get("Mon + Fri")! },
+            { restrictionMode: "ANYONE" as const, restrictionId: null, shiftId: shifts.get("Tuesday Only")! },
+            { restrictionMode: "CUSTOM" as const, restrictionId: engineering.id, shiftId: shifts.get("Wednesday Only")! },
+            { restrictionMode: "CUSTOM" as const, restrictionId: sales.id, shiftId: shifts.get("Thursday Only")! },
+          ]
+        : [{ restrictionMode: "ANYONE" as const, restrictionId: null, shiftId: shifts.get("Mon–Fri")!, advanceBookingWindowDays: 30 }];
+
+    await db.deskRestrictionAssignment.createMany({
+      data: blocks.map((block, sortOrder) => ({ organizationId, deskId: desk.id, sortOrder, ...block })),
     });
-
-    if (!existing) {
-      await db.availabilityShift.create({
-        data: {
-          organizationId,
-          deskId: desk.id,
-          restrictionId: anyoneRestriction.id,
-          name: "Weekday 9-5",
-          daysOfWeek: [1, 2, 3, 4, 5], // Mon-Fri
-          advanceBookingWindowDays: 30,
-          startTimeMinutes: 540, // 9:00
-          endTimeMinutes: 1020, // 17:00
-        },
-      });
-    }
   }
 }
 

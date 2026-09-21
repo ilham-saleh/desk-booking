@@ -8,11 +8,11 @@ import {
   Building2,
   Users,
   SquareStack,
-  Settings2,
   Lock,
 } from "lucide-react";
 
-import { Role } from "@/generated/prisma/enums";
+import type { Role } from "@/generated/prisma/enums";
+import { isAdminRole } from "@/lib/roles";
 
 export interface NavItem {
   label: string;
@@ -31,15 +31,10 @@ const adminNavItems: NavItem[] = [
   { label: "Editing Platform", href: "/admin/editor", icon: PencilRuler },
   { label: "Facilities / Sites", href: "/admin/sites", icon: Building2 },
   { label: "Users", href: "/admin/users", icon: Users },
-  { label: "Departments", href: "/admin/departments", icon: Settings2 },
   { label: "Restrictions", href: "/admin/restrictions", icon: Lock },
 ];
 
 /** Display concern only — actual authorization is re-checked server-side on every request. */
-function isAdminRole(role: Role): boolean {
-  return role === Role.SITE_ADMIN || role === Role.ORG_SUPER_ADMIN;
-}
-
 export function getNavItems(role: Role): NavItem[] {
   // Admin roles (FACILITY_ADMIN/SITE_ADMIN, ORG_SUPER_ADMIN) see employee + admin nav
   if (isAdminRole(role)) {

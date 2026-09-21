@@ -18,6 +18,8 @@ export interface FloorCanvasDesk {
   state: DeskState;
   /** Only set while the "Book a Desk" flow has a specific date/time slot in mind. */
   freeForRequestedSlot?: boolean;
+  /** False when the signed-in viewer can't book this desk on the selected date (restriction/shift/window). */
+  eligibleForViewer?: boolean;
 }
 
 export interface FloorCanvasRoom {
@@ -44,8 +46,14 @@ const DESK_COLORS: Record<DeskState, string> = {
   [DeskState.INACTIVE]: "#9ca3af",
 };
 
+const RESTRICTED_STROKE = "#7c3aed";
 const DESK_RADIUS = 14;
 
+/**
+ * Read-only employee floor map: select + inspect only. Desk coordinates are
+ * floor-plan image pixels; the stage scales to the container width so the
+ * markers stay aligned at any viewport size.
+ */
 export function FloorCanvas({
   renderedImageKey,
   imageWidth,
@@ -132,6 +140,9 @@ export function FloorCanvas({
           {desks.map((desk) => {
             const eligible = !highlightMode || desk.freeForRequestedSlot;
             const isSelected = desk.id === selectedDeskId;
+            const restricted = desk.eligibleForViewer === false && desk.state !== DeskState.INACTIVE;
+            const stroke = isSelected ? "#111827" : restricted ? RESTRICTED_STROKE : desk.requiresCheckIn ? "#ffffff" : undefined;
+            const strokeWidth = isSelected ? 3 : restricted ? 2.5 : desk.requiresCheckIn ? 2 : 0;
             return (
               <Circle
                 key={desk.id}
@@ -139,12 +150,13 @@ export function FloorCanvas({
                 y={desk.y}
                 radius={DESK_RADIUS}
                 fill={DESK_COLORS[desk.state]}
-                opacity={eligible ? 1 : 0.25}
+                opacity={eligible ? (restricted ? 0.75 : 1) : 0.25}
                 shadowColor="#000"
                 shadowBlur={isSelected ? 8 : 3}
                 shadowOpacity={isSelected ? 0.35 : 0.15}
-                stroke={isSelected ? "#111827" : desk.requiresCheckIn ? "#ffffff" : undefined}
-                strokeWidth={isSelected ? 3 : desk.requiresCheckIn ? 2 : 0}
+                stroke={stroke}
+                strokeWidth={strokeWidth}
+                dash={restricted && !isSelected ? [4, 3] : undefined}
                 onClick={() => eligible && onSelectDesk(desk.id)}
                 onTap={() => eligible && onSelectDesk(desk.id)}
                 onMouseEnter={(e) => {
@@ -165,6 +177,20 @@ export function FloorCanvas({
                 y={desk.y - DESK_RADIUS + 3}
                 radius={4}
                 fill="#0ea5e9"
+                stroke="#ffffff"
+                strokeWidth={1}
+                listening={false}
+              />
+            ))}
+          {desks
+            .filter((desk) => desk.eligibleForViewer === false && desk.state !== DeskState.INACTIVE)
+            .map((desk) => (
+              <Circle
+                key={`${desk.id}-restricted-badge`}
+                x={desk.x - DESK_RADIUS + 3}
+                y={desk.y - DESK_RADIUS + 3}
+                radius={4}
+                fill={RESTRICTED_STROKE}
                 stroke="#ffffff"
                 strokeWidth={1}
                 listening={false}
@@ -208,6 +234,10 @@ function FloorLegend({ className }: { className?: string }) {
       <span className="flex items-center gap-1.5">
         <span className="inline-block size-2.5 rounded-full bg-sky-500" />
         Requires check-in
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block size-2.5 rounded-full border-2 border-dashed" style={{ borderColor: RESTRICTED_STROKE }} />
+        Restricted for you on this date
       </span>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   type FloorPlanUploadInput
 } from "@/lib/schemas/floor";
 import { storage, floorPlanKey } from "@/server/storage";
+import { readImageDimensions } from "@/server/storage/image-dimensions";
 
 // Re-export for backward compatibility
 export { floorCreateInputSchema, type FloorCreateInput, floorUpdateInputSchema, type FloorUpdateInput, floorPlanUploadInputSchema, type FloorPlanUploadInput };
@@ -33,7 +34,7 @@ export const floorRouter = createTRPCRouter({
       include: {
         site: true,
         livePlanVersion: true,
-        desks: { orderBy: { number: "asc" } },
+        desks: { where: { archivedAt: null }, orderBy: { number: "asc" } },
         rooms: true,
         utilities: true,
       },
@@ -406,10 +407,14 @@ export const floorRouter = createTRPCRouter({
       // Convert array back to Buffer
       const fileBuffer = Buffer.from(input.fileData);
 
-      // For images, use directly as rendered image
+      // Images are used directly as the rendered map background. Desk
+      // coordinates are stored in image pixels, so the real dimensions matter.
       const renderedBuffer = fileBuffer;
-      const imageWidth = 1200;
-      const imageHeight = 800;
+      const dimensions = readImageDimensions(fileBuffer, input.mimeType);
+      if (!dimensions) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "That file doesn't look like a valid PNG or JPG image." });
+      }
+      const { width: imageWidth, height: imageHeight } = dimensions;
 
       // Store the image
       const renderedKey = floorPlanKey(ctx.organizationId, input.floorId, draft.id, "png");

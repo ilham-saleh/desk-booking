@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { Role } from "@/generated/prisma/enums";
+import type { Role } from "@/generated/prisma/enums";
+import { canBookForOthersRole, isAdminRole } from "@/lib/roles";
+import { formatDays, WEEKDAY_LONG, dayOfWeekForDate } from "@/lib/restrictions";
+import { describeAssignmentAudience } from "@/lib/restriction-labels";
 import { buildTimeOptions, formatMinutesLabel, todayInTimeZone } from "@/lib/time-slots";
 import { api } from "@/lib/trpc/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -22,16 +25,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BookingSubjectFields, type BookingSubjectMode } from "@/components/booking/subject-fields";
+import { Swatch } from "@/components/ui/combobox";
 
 export interface DeskPanelDesk {
   id: string;
   number: string;
   name: string | null;
   requiresCheckIn: boolean;
+  isActive: boolean;
 }
 
 export interface DeskPanelSite {
   id: string;
+  name: string;
   timeZone: string;
   operatingHoursStart: number;
   operatingHoursEnd: number;
@@ -47,19 +53,23 @@ export interface DeskPanelOccupant {
   occupantLabel: string;
 }
 
-function isAdminRole(role: Role): boolean {
-  return role === Role.SITE_ADMIN || role === Role.ORG_SUPER_ADMIN;
-}
-
 function formatTime(value: string | Date, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(value));
 }
 
+/**
+ * Right-side desk details panel on the Floor Map: booking controls,
+ * "Restricted to" (every restriction block + shift configured in the Editing
+ * Platform, straight from the database), today's bookings and location.
+ * Inspect + book only — nothing here can edit or move a desk.
+ */
 export function DeskPanel({
   open,
   onOpenChange,
   desk,
   site,
+  floorName,
+  initialDate,
   occupants,
   currentUserId,
   currentUserRole,
@@ -69,6 +79,9 @@ export function DeskPanel({
   onOpenChange: (open: boolean) => void;
   desk: DeskPanelDesk;
   site: DeskPanelSite;
+  floorName: string;
+  /** The date selected on the Floor Map — the booking form starts from it. */
+  initialDate: string;
   occupants: DeskPanelOccupant[];
   currentUserId: string;
   currentUserRole: Role;
@@ -83,6 +96,8 @@ export function DeskPanel({
     void utils.booking.getFloorAvailability.invalidate();
     onChanged();
   };
+
+  const details = api.desk.get.useQuery({ deskId: desk.id }, { enabled: open });
 
   const checkIn = api.booking.checkIn.useMutation({
     onSuccess: () => {
@@ -106,19 +121,28 @@ export function DeskPanel({
     onError: (error) => toast.error(error.message),
   });
 
+  const assignments = details.data?.restrictionAssignments ?? [];
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader className="border-b">
           <SheetTitle>Desk {desk.number}</SheetTitle>
           <SheetDescription>
-            {desk.name ?? "No name"}
-            {desk.requiresCheckIn && " · Check-in required"}
+            {details.data?.spaceType ?? "Desk"}
+            {desk.name && ` · ${desk.name}`}
+            {desk.requiresCheckIn ? " · Check-in required" : " · No check-in required"}
+            {!desk.isActive && " · Inactive"}
           </SheetDescription>
+          {details.data?.description && <p className="text-sm">{details.data.description}</p>}
         </SheetHeader>
 
-        <div className="flex flex-col gap-4 p-4">
-          {currentBooking ? (
+        <div className="flex flex-col gap-5 p-4">
+          {!desk.isActive ? (
+            <p role="status" className="text-muted-foreground rounded-md border bg-muted/40 p-3 text-sm">
+              This desk is inactive and can&apos;t be booked.
+            </p>
+          ) : currentBooking ? (
             <OccupantCard
               booking={currentBooking}
               site={site}
@@ -130,37 +154,96 @@ export function DeskPanel({
               endBookingPending={endBooking.isPending}
             />
           ) : (
-            <BookingForm
-              desk={desk}
-              site={site}
-              currentUserRole={currentUserRole}
-              onBooked={onMutationSettled}
-            />
+            <BookingForm desk={desk} site={site} initialDate={initialDate} currentUserRole={currentUserRole} onBooked={onMutationSettled} />
           )}
 
-          {occupants.length > 0 && (
-            <div className="space-y-1.5 border-t pt-4 text-sm">
-              <p className="font-medium">Today&apos;s bookings</p>
-              {occupants.map((o) => (
-                <div key={o.id} className="flex items-center justify-between gap-2">
-                  <p className="text-muted-foreground">
-                    {formatTime(o.startAt, site.timeZone)}–{formatTime(o.endAt, site.timeZone)} — {o.occupantLabel}
-                    <StatusBadge status={o.status} className="ml-2" />
-                  </p>
-                  {o.status === "CONFIRMED" && new Date(o.startAt) > now && canActOn(o) && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={cancelBooking.isPending}
-                      onClick={() => cancelBooking.mutate({ bookingId: o.id })}
-                    >
-                      Cancel
-                    </Button>
-                  )}
+          {/* Restricted to — from the desk's restriction blocks in the database */}
+          <section className="space-y-2 border-t pt-4 text-sm" aria-labelledby="desk-restricted-heading">
+            <h3 id="desk-restricted-heading" className="font-medium">
+              Restricted to
+            </h3>
+            {details.isPending ? (
+              <p className="text-muted-foreground">Loading restrictions…</p>
+            ) : assignments.length === 0 ? (
+              <div className="flex items-start gap-3">
+                <Avatar className="size-9">
+                  <AvatarFallback className="text-xs">All</AvatarFallback>
+                </Avatar>
+                <div>
+                  <p>Anyone can book</p>
+                  <p className="text-muted-foreground text-xs">No day-specific restrictions on this desk</p>
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {assignments.map((assignment) => {
+                  const audience = describeAssignmentAudience(assignment);
+                  const color = assignment.restrictionMode === "CUSTOM" ? assignment.restriction?.color : null;
+                  return (
+                    <li key={assignment.id} className="flex items-start gap-3">
+                      <Avatar className="size-9">
+                        <AvatarFallback className="text-xs">{audience.charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-1.5">
+                          {color && <Swatch color={color} />}
+                          <span>{audience}</span>
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          Shift ({assignment.shift.name}: {formatDays(assignment.shift.daysOfWeek)})
+                          {assignment.advanceBookingWindowDays ? ` · up to ${assignment.advanceBookingWindowDays} days ahead` : ""}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
+          <section className="space-y-1.5 border-t pt-4 text-sm" aria-labelledby="desk-today-heading">
+            <h3 id="desk-today-heading" className="font-medium">
+              Today&apos;s bookings
+            </h3>
+            {occupants.length === 0 && <p className="text-muted-foreground">No upcoming bookings</p>}
+            {occupants.map((o) => (
+              <div key={o.id} className="flex items-center justify-between gap-2">
+                <p className="text-muted-foreground">
+                  {formatTime(o.startAt, site.timeZone)}–{formatTime(o.endAt, site.timeZone)} — {o.occupantLabel}
+                  <StatusBadge status={o.status} className="ml-2" />
+                </p>
+                {o.status === "CONFIRMED" && new Date(o.startAt) > now && canActOn(o) && (
+                  <Button size="sm" variant="ghost" disabled={cancelBooking.isPending} onClick={() => cancelBooking.mutate({ bookingId: o.id })}>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+            ))}
+          </section>
+
+          {details.data && details.data.attributes.length > 0 && (
+            <section className="space-y-1.5 border-t pt-4 text-sm" aria-labelledby="desk-features-heading">
+              <h3 id="desk-features-heading" className="font-medium">
+                Features
+              </h3>
+              <div className="flex flex-wrap gap-1.5">
+                {details.data.attributes.map((a) => (
+                  <Badge key={a.id} variant="secondary">
+                    {a.type.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}
+                  </Badge>
+                ))}
+              </div>
+            </section>
           )}
+
+          <section className="space-y-1 border-t pt-4 text-sm" aria-labelledby="desk-location-heading">
+            <h3 id="desk-location-heading" className="font-medium">
+              Location
+            </h3>
+            <p>{desk.number}</p>
+            <p className="text-muted-foreground">{floorName}</p>
+            <p className="text-muted-foreground">{site.name}</p>
+          </section>
         </div>
       </SheetContent>
     </Sheet>
@@ -231,18 +314,21 @@ function OccupantCard({
 function BookingForm({
   desk,
   site,
+  initialDate,
   currentUserRole,
   onBooked,
 }: {
   desk: DeskPanelDesk;
   site: DeskPanelSite;
+  initialDate: string;
   currentUserRole: Role;
   onBooked: () => void;
 }) {
-  const isAdmin = isAdminRole(currentUserRole);
+  // Display gate only — booking.create enforces per-site "book for others" permission.
+  const isAdmin = canBookForOthersRole(currentUserRole);
   const timeOptions = buildTimeOptions(site.operatingHoursStart, site.operatingHoursEnd);
 
-  const [date, setDate] = useState(todayInTimeZone(site.timeZone));
+  const [date, setDate] = useState(initialDate);
   const [startMinutes, setStartMinutes] = useState<number>(timeOptions[0] ?? 0);
   const [endMinutes, setEndMinutes] = useState<number>(timeOptions[1] ?? timeOptions[0] ?? 0);
   const [subjectMode, setSubjectMode] = useState<BookingSubjectMode>("self");
@@ -251,6 +337,15 @@ function BookingForm({
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const orgUsers = api.user.listActive.useQuery(undefined, { enabled: isAdmin });
+
+  // Same engine the server enforces — explains restriction/shift/window for the chosen date + occupant.
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  const eligibility = api.desk.checkEligibility.useQuery(
+    { deskId: desk.id, date, occupantUserId: subjectMode === "user" && forUserId ? forUserId : undefined },
+    { enabled: validDate && subjectMode !== "guest", placeholderData: (prev) => prev },
+  );
+  const blocked = subjectMode !== "guest" && eligibility.data ? !eligibility.data.eligible : false;
+
   const createBooking = api.booking.create.useMutation({
     onSuccess: () => {
       toast.success(`Booked desk ${desk.number}`);
@@ -335,12 +430,23 @@ function BookingForm({
         )}
       </div>
 
+      {blocked && eligibility.data && (
+        <div role="status" className="rounded-md border border-violet-200 bg-violet-50 p-3 text-sm text-violet-950">
+          <p className="font-medium">
+            {subjectMode === "user" ? "This person can't book this desk" : "You can't book this desk"} on {WEEKDAY_LONG[dayOfWeekForDate(date)]}.
+          </p>
+          <p className="mt-1">{eligibility.data.reason}</p>
+        </div>
+      )}
+      {!blocked && subjectMode !== "guest" && eligibility.data?.eligible && (
+        <p className="text-muted-foreground text-xs" role="status">
+          You&apos;re eligible to book this desk on {WEEKDAY_LONG[dayOfWeekForDate(date)]}.
+        </p>
+      )}
+
       <div className="flex flex-col gap-2">
-        <Button disabled={subjectMode === "user" && !forUserId} onClick={() => setConfirmOpen(true)}>
+        <Button disabled={(subjectMode === "user" && !forUserId) || blocked || !validDate} onClick={() => setConfirmOpen(true)}>
           Book desk {desk.number}
-        </Button>
-        <Button variant="outline" disabled>
-          Watch (Phase 5)
         </Button>
       </div>
 
