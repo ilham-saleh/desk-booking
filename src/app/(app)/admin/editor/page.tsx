@@ -15,6 +15,7 @@ import { FloorPlanUpload } from "@/components/admin/editor/floor-plan-upload";
 import { EditorLayout, type EditorAction, type EditorMode, type EditorObjectType } from "@/components/admin/editor/editor-layout";
 import { DeleteDeskDialog } from "@/components/admin/editor/delete-desk-dialog";
 import { NeighbourhoodEditorDialog } from "@/components/admin/editor/neighbourhood-editor-dialog";
+import { NeighbourhoodDeskSelector } from "@/components/admin/editor/neighbourhood-desk-selector";
 import { DeskEditModal } from "@/components/admin/desk-edit-modal";
 
 const DEFAULT_PLAN_WIDTH = 1200;
@@ -30,6 +31,8 @@ export default function AdminEditorPage() {
   const [editingDeskId, setEditingDeskId] = useState<string | null>(null);
   const [deletingDeskId, setDeletingDeskId] = useState<string | null>(null);
   const [editingNeighbourhoodId, setEditingNeighbourhoodId] = useState<string | null>(null);
+  const [selectingNeighbourhoodDesks, setSelectingNeighbourhoodDesks] = useState(false);
+  const [selectedNeighbourhoodDeskIds, setSelectedNeighbourhoodDeskIds] = useState<string[]>([]);
   const [showFloorPlanTools, setShowFloorPlanTools] = useState(false);
 
   const utils = api.useUtils();
@@ -104,7 +107,8 @@ export default function AdminEditorPage() {
       return;
     }
     if (objectType === "neighbourhoods" && action === "create") {
-      setEditingNeighbourhoodId("__new__");
+      setSelectingNeighbourhoodDesks(true);
+      setSelectedNeighbourhoodDeskIds([]);
       return;
     }
     if (objectType === "neighbourhoods" && action === "edit" && editingNeighbourhood) {
@@ -232,6 +236,22 @@ export default function AdminEditorPage() {
           </div>
         </div>
 
+        {selectingNeighbourhoodDesks && (
+          <NeighbourhoodDeskSelector
+            desks={floorDesks.map((d) => ({ id: d.id, number: d.number, x: d.x, y: d.y }))}
+            onSelectionComplete={(deskIds) => {
+              setSelectedNeighbourhoodDeskIds(deskIds);
+              setSelectingNeighbourhoodDesks(false);
+              setEditingNeighbourhoodId("__new__");
+            }}
+            onCancel={() => {
+              setSelectingNeighbourhoodDesks(false);
+              setSelectedNeighbourhoodDeskIds([]);
+              clearAction();
+            }}
+          />
+        )}
+
         {planPending || desksPending ? (
           <Card>
             <CardContent className="flex items-center justify-center py-12">
@@ -332,10 +352,15 @@ export default function AdminEditorPage() {
           neighbourhood={editingNeighbourhoodId === "__new__" ? null : editingNeighbourhood}
           floorId={selectedFloorId}
           desks={floorDesks.map((d) => ({ id: d.id, number: d.number }))}
-          onClose={() => setEditingNeighbourhoodId(null)}
+          preSelectedDeskIds={editingNeighbourhoodId === "__new__" ? selectedNeighbourhoodDeskIds : []}
+          onClose={() => {
+            setEditingNeighbourhoodId(null);
+            setSelectedNeighbourhoodDeskIds([]);
+          }}
           onSuccess={() => {
             void utils.neighbourhood.listForFloor.invalidate({ floorId: selectedFloorId });
             void utils.floor.get.invalidate({ floorId: selectedFloorId });
+            setSelectedNeighbourhoodDeskIds([]);
           }}
         />
       )}

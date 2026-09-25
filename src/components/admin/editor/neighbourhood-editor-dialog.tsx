@@ -27,6 +27,7 @@ interface NeighbourhoodEditorDialogProps {
   neighbourhood: Neighbourhood | null;
   floorId: string;
   desks: Array<{ id: string; number: string }>;
+  preSelectedDeskIds?: string[];
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -42,7 +43,15 @@ const COLORS = [
   "#85C1E2",
 ];
 
-export function NeighbourhoodEditorDialog({ open, neighbourhood, floorId, desks, onClose, onSuccess }: NeighbourhoodEditorDialogProps) {
+export function NeighbourhoodEditorDialog({
+  open,
+  neighbourhood,
+  floorId,
+  desks,
+  preSelectedDeskIds = [],
+  onClose,
+  onSuccess,
+}: NeighbourhoodEditorDialogProps) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(COLORS[0]);
   const [description, setDescription] = useState("");
@@ -60,13 +69,14 @@ export function NeighbourhoodEditorDialog({ open, neighbourhood, floorId, desks,
       setCaptain(neighbourhood.captain || "");
       setSelectedDeskIds(new Set(neighbourhood.desks.map((d) => d.deskId)));
     } else {
+      // For new neighbourhoods, use pre-selected desks
       setName("");
       setColor(COLORS[0]);
       setDescription("");
       setCaptain("");
-      setSelectedDeskIds(new Set());
+      setSelectedDeskIds(new Set(preSelectedDeskIds));
     }
-  }, [neighbourhood, open]);
+  }, [neighbourhood, open, preSelectedDeskIds]);
 
   const createMutation = api.neighbourhood.create.useMutation({
     onSuccess: () => {
@@ -210,24 +220,42 @@ export function NeighbourhoodEditorDialog({ open, neighbourhood, floorId, desks,
           {/* Assigned Desks */}
           <div className="space-y-2">
             <Label>Assigned Desks *</Label>
-            <div className="max-h-64 space-y-2 overflow-y-auto rounded border p-3">
-              {desks.length === 0 ? (
-                <p className="text-muted-foreground text-sm">No desks available</p>
-              ) : (
-                desks.map((desk) => (
-                  <div key={desk.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`desk-${desk.id}`}
-                      checked={selectedDeskIds.has(desk.id)}
-                      onCheckedChange={() => toggleDesk(desk.id)}
-                    />
-                    <label htmlFor={`desk-${desk.id}`} className="cursor-pointer text-sm">
-                      Desk {desk.number}
-                    </label>
-                  </div>
-                ))
-              )}
-            </div>
+            {preSelectedDeskIds.length > 0 && !neighbourhood ? (
+              <div className="rounded border border-green-200 bg-green-50 p-3">
+                <p className="mb-2 text-sm font-medium text-green-900">
+                  {selectedDeskIds.size} desk(s) selected
+                </p>
+                <div className="space-y-1">
+                  {Array.from(selectedDeskIds)
+                    .map((id) => desks.find((d) => d.id === id))
+                    .filter(Boolean)
+                    .map((desk) => (
+                      <div key={desk!.id} className="flex items-center gap-2 text-sm">
+                        <span className="rounded bg-green-200 px-2 py-1">Desk {desk!.number}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded border p-3">
+                {desks.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">No desks available</p>
+                ) : (
+                  desks.map((desk) => (
+                    <div key={desk.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`desk-${desk.id}`}
+                        checked={selectedDeskIds.has(desk.id)}
+                        onCheckedChange={() => toggleDesk(desk.id)}
+                      />
+                      <label htmlFor={`desk-${desk.id}`} className="cursor-pointer text-sm">
+                        Desk {desk.number}
+                      </label>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
 
