@@ -112,7 +112,7 @@ export function FloorMapView({
       color: n.color,
       deskIds: n.desks.map((d) => d.deskId),
     }));
-  }, [floor.data?.neighbourhoods]);
+  }, [floor.data]);
 
   const selectedDesk = floor.data?.desks.find((d) => d.id === selectedDeskId);
   const selectedDeskAvailability = availability.data?.desks.find((d) => d.deskId === selectedDeskId);
