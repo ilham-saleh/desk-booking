@@ -14,6 +14,7 @@ import { FloorCanvasEditor, type EditorDesk } from "@/components/admin/editor/fl
 import { FloorPlanUpload } from "@/components/admin/editor/floor-plan-upload";
 import { EditorLayout, type EditorAction, type EditorMode, type EditorObjectType } from "@/components/admin/editor/editor-layout";
 import { DeleteDeskDialog } from "@/components/admin/editor/delete-desk-dialog";
+import { NeighbourhoodEditorDialog } from "@/components/admin/editor/neighbourhood-editor-dialog";
 import { DeskEditModal } from "@/components/admin/desk-edit-modal";
 
 const DEFAULT_PLAN_WIDTH = 1200;
@@ -28,6 +29,7 @@ export default function AdminEditorPage() {
   const [selectedDeskId, setSelectedDeskId] = useState<string | null>(null);
   const [editingDeskId, setEditingDeskId] = useState<string | null>(null);
   const [deletingDeskId, setDeletingDeskId] = useState<string | null>(null);
+  const [editingNeighbourhoodId, setEditingNeighbourhoodId] = useState<string | null>(null);
   const [showFloorPlanTools, setShowFloorPlanTools] = useState(false);
 
   const utils = api.useUtils();
@@ -41,9 +43,14 @@ export default function AdminEditorPage() {
     { floorId: selectedFloorId! },
     { enabled: !!selectedFloorId },
   );
+  const { data: neighbourhoods = [] } = api.neighbourhood.listForFloor.useQuery(
+    { floorId: selectedFloorId! },
+    { enabled: !!selectedFloorId },
+  );
 
   const selectedFloor = floors.find((f) => f.id === selectedFloorId);
   const selectedSite = sites?.find((s) => s.id === selectedSiteId);
+  const editingNeighbourhood = neighbourhoods.find((n) => n.id === editingNeighbourhoodId) ?? null;
 
   const desks: EditorDesk[] = useMemo(
     () =>
@@ -94,6 +101,19 @@ export default function AdminEditorPage() {
     }
     if (objectType === "desks" && action === "delete" && selectedDeskId) {
       setDeletingDeskId(selectedDeskId);
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "create") {
+      setEditingNeighbourhoodId("__new__");
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "edit" && editingNeighbourhood) {
+      // neighbourhoodId is already in editingNeighbourhoodId state; just open the dialog
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "delete") {
+      // Implement delete in a later phase
+      toast.error("Delete not yet implemented");
       return;
     }
     if (activeObjectType === objectType && activeAction === action) {
@@ -305,6 +325,20 @@ export default function AdminEditorPage() {
         }}
         onOpenDeskEditor={(deskId) => setEditingDeskId(deskId)}
       />
+
+      {selectedFloorId && (
+        <NeighbourhoodEditorDialog
+          open={!!editingNeighbourhoodId}
+          neighbourhood={editingNeighbourhoodId === "__new__" ? null : editingNeighbourhood}
+          floorId={selectedFloorId}
+          desks={floorDesks.map((d) => ({ id: d.id, number: d.number }))}
+          onClose={() => setEditingNeighbourhoodId(null)}
+          onSuccess={() => {
+            void utils.neighbourhood.listForFloor.invalidate({ floorId: selectedFloorId });
+            void utils.floor.get.invalidate({ floorId: selectedFloorId });
+          }}
+        />
+      )}
     </EditorLayout>
   );
 }
