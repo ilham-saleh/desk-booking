@@ -13,21 +13,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { BookingSubjectFields, type BookingSubjectMode } from "@/components/booking/subject-fields";
+import { BookingSubjectFields, type BookingSubjectMode, type BookingSubjectUser } from "@/components/booking/subject-fields";
 import { FloorCanvas, type FloorCanvasDesk } from "@/components/floor-map/floor-canvas";
 
 export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
   // Display gate only — booking.create enforces per-site "book for others" permission.
   const isAdmin = canBookForOthersRole(currentUserRole);
   const sites = api.site.list.useQuery();
-  const orgUsers = api.user.listActive.useQuery(undefined, { enabled: isAdmin });
 
   const [siteId, setSiteId] = useState<string>("");
   const [date, setDate] = useState("");
   const [startMinutes, setStartMinutes] = useState<number | null>(null);
   const [endMinutes, setEndMinutes] = useState<number | null>(null);
   const [subjectMode, setSubjectMode] = useState<BookingSubjectMode>("self");
-  const [forUserId, setForUserId] = useState("");
+  const [forUser, setForUser] = useState<BookingSubjectUser | null>(null);
   const [guestName, setGuestName] = useState("");
 
   const [searching, setSearching] = useState(false);
@@ -42,8 +41,16 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
 
   const effectiveFloorId = floorId ?? currentSite?.floors[0]?.id ?? null;
   const floor = api.floor.get.useQuery({ floorId: effectiveFloorId! }, { enabled: searching && !!effectiveFloorId });
+  // Eligibility is evaluated for whoever will sit at the desk: the chosen employee, a guest, or the viewer.
   const availability = api.booking.getFloorAvailability.useQuery(
-    { floorId: effectiveFloorId!, date, startMinutes: startMinutes!, endMinutes: endMinutes! },
+    {
+      floorId: effectiveFloorId!,
+      date,
+      startMinutes: startMinutes!,
+      endMinutes: endMinutes!,
+      occupantUserId: subjectMode === "user" && forUser ? forUser.id : undefined,
+      forGuest: subjectMode === "guest" ? true : undefined,
+    },
     { enabled: searching && !!effectiveFloorId && !!date && startMinutes !== null && endMinutes !== null },
   );
 
@@ -76,14 +83,20 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
     },
   });
 
-  const canSearch = !!siteId && !!date && startMinutes !== null && endMinutes !== null;
+  const canSearch =
+    !!siteId &&
+    !!date &&
+    startMinutes !== null &&
+    endMinutes !== null &&
+    (subjectMode === "self" || (subjectMode === "user" && !!forUser) || (subjectMode === "guest" && guestName.trim().length > 0));
 
   return (
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-2xl font-semibold">Book a Desk</h1>
         <p className="text-muted-foreground text-sm">
-          Pick a site, date, and time range, then find and confirm an available desk.
+          Pick a site, date, and time range, then find and confirm an available desk. Highlighted desks are free for that time and
+          open to the person you&apos;re booking for.
         </p>
       </div>
 
@@ -96,9 +109,15 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
             <div className="sm:col-span-2 lg:col-span-4">
               <BookingSubjectFields
                 mode={subjectMode}
-                onModeChange={setSubjectMode}
-                forUserId={forUserId}
-                onForUserIdChange={setForUserId}
+                onModeChange={(m) => {
+                  setSubjectMode(m);
+                  setSearching(false);
+                }}
+                forUser={forUser}
+                onForUserChange={(u) => {
+                  setForUser(u);
+                  setSearching(false);
+                }}
                 guestName={guestName}
                 onGuestNameChange={setGuestName}
               />
@@ -244,8 +263,8 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
               value={
                 subjectMode === "guest" && guestName
                   ? guestName
-                  : subjectMode === "user" && forUserId
-                    ? orgUsers.data?.find((u) => u.id === forUserId)?.name ?? "Selected user"
+                  : subjectMode === "user" && forUser
+                    ? forUser.name
                     : "Myself"
               }
             />
@@ -267,7 +286,7 @@ export function BookADeskView({ currentUserRole }: { currentUserRole: Role }) {
                   date,
                   startMinutes: startMinutes!,
                   endMinutes: endMinutes!,
-                  forUserId: subjectMode === "user" && forUserId ? forUserId : undefined,
+                  forUserId: subjectMode === "user" && forUser ? forUser.id : undefined,
                   guestName: subjectMode === "guest" && guestName ? guestName : undefined,
                 })
               }

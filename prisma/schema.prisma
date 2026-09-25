@@ -135,6 +135,7 @@ model Organization {
   deskRestrictionOccupants DeskRestrictionOccupant[]
   deskAttributes         DeskAttribute[]
   siteOperatingHours     SiteOperatingHours[]
+  neighbourhoods         Neighbourhood[]
 
   @@map("organizations")
 }
@@ -178,6 +179,7 @@ model User {
   createdFloorPlanVersions FloorPlanVersion[]
   assignedDesks            Desk[]             @relation("AssignedOccupant")
   deskRestrictionOccupants DeskRestrictionOccupant[]
+  neighbourhoodMemberships NeighbourhoodMember[]
 
   @@unique([organizationId, email])
   @@unique([organizationId, employeeId])
@@ -254,6 +256,7 @@ model Floor {
   desks           Desk[]
   rooms           Room[]
   utilities       Utility[]
+  neighbourhoods  Neighbourhood[]
 
   @@map("floors")
 }
@@ -314,6 +317,7 @@ model Desk {
   deskWatches        DeskWatch[]
   restrictionAssignments DeskRestrictionAssignment[]
   attributes         DeskAttribute[]
+  neighbourhoods     NeighbourhoodDesk[]
 
   @@unique([floorId, number])
   @@index([floorId, archivedAt])
@@ -599,4 +603,77 @@ model SiteOperatingHours {
   @@index([organizationId])
   @@index([siteId])
   @@map("site_operating_hours")
+}
+
+/// Logical area/group of desks on a floor (e.g. Technology, Finance, Consulting).
+/// Neighbourhoods are used to visually organize desks and restrict booking by membership.
+model Neighbourhood {
+  id             String   @id @default(cuid())
+  organizationId String
+  floorId        String
+  name           String
+  color          String
+  description    String?
+  imageUrl       String?
+  captain        String? // captain user ID
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  floor        Floor             @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  desks        NeighbourhoodDesk[]
+  members      NeighbourhoodMember[]
+  rules        NeighbourhoodRule[]
+
+  @@unique([floorId, name])
+  @@index([organizationId])
+  @@index([floorId])
+  @@map("neighbourhoods")
+}
+
+/// Link desk to neighbourhood (many-to-one).
+model NeighbourhoodDesk {
+  id               String   @id @default(cuid())
+  neighbourhoodId  String
+  deskId           String
+  createdAt        DateTime @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+  desk          Desk          @relation(fields: [deskId], references: [id], onDelete: Cascade)
+
+  @@unique([neighbourhoodId, deskId])
+  @@index([deskId])
+  @@map("neighbourhood_desks")
+}
+
+/// Employee membership in a neighbourhood (manual assignment).
+model NeighbourhoodMember {
+  id               String   @id @default(cuid())
+  neighbourhoodId  String
+  userId           String
+  createdAt        DateTime @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([neighbourhoodId, userId])
+  @@index([userId])
+  @@map("neighbourhood_members")
+}
+
+/// Rule for auto-matching neighbourhood members (e.g., "Department = Technology").
+model NeighbourhoodRule {
+  id               String                @id @default(cuid())
+  neighbourhoodId  String
+  fieldType        RestrictionFieldType
+  operator         RestrictionOperator
+  value            Json // array of strings (empty for IS_EMPTY / IS_NOT_EMPTY)
+  connector        RuleConnector         @default(OR)
+  sortOrder        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+
+  @@index([neighbourhoodId])
+  @@map("neighbourhood_rules")
 }

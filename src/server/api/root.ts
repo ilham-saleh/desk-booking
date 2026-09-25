@@ -5,7 +5,9 @@ import { deskRouter } from "@/server/api/routers/desk";
 import { facilityRouter } from "@/server/api/routers/facility";
 import { floorRouter } from "@/server/api/routers/floor";
 import { healthRouter } from "@/server/api/routers/health";
+import { neighbourhoodRouter } from "@/server/api/routers/neighbourhood";
 import { restrictionRouter } from "@/server/api/routers/restriction";
+import { searchRouter } from "@/server/api/routers/search";
 import { shiftRouter } from "@/server/api/routers/shift";
 import { siteRouter } from "@/server/api/routers/site";
 import { userRouter } from "@/server/api/routers/user";
@@ -21,6 +23,8 @@ export const appRouter = createTRPCRouter({
   restriction: restrictionRouter,
   shift: shiftRouter,
   desk: deskRouter,
+  neighbourhood: neighbourhoodRouter,
+  search: searchRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -49,9 +49,10 @@ The application must follow these principles:
 A standard employee should see:
 
 - Home
-- My Bookings
-- Book a Desk
 - Floor Map
+- Book a Desk
+- My Bookings
+
 
 A standard employee must **not** see or access:
 
@@ -1010,13 +1011,23 @@ Flow:
 
 ```text
 Floor Map
-→ Select Site
-→ Select Floor
+→ Select Site (dropdown)
+→ Select Floor (dropdown, floors of the selected site)
 → Select date/time where applicable
 → floor plan loads
 → click desk
 → desk detail sidebar opens
 ```
+
+The Floor Map also accepts a deep link (`/floor-map?site=&floor=&desk=&date=&start=&end=`), used by "locate on map" in My Bookings: the map opens on that site/floor/date/time, selects the desk, opens its detail panel and marks it with a pulsing ring until the viewer picks another desk. `?person=` opens a colleague's card instead. Malformed parameters fall back to the defaults.
+
+## 30.1 Search
+
+The top bar carries a search box available to every user on every page:
+
+- Typing a desk number (or desk name) lists matching desks across all sites, with their site and floor. Picking one opens the Floor Map on that site/floor, selects the desk, opens its detail panel and highlights it.
+- Typing a name (or email) lists matching active employees from the directory. Picking one opens a right-side person card: name, email, department, title, the booking in progress right now and the next upcoming booking, each with a "Locate" action that jumps to the desk. Someone without bookings shows details only.
+- Results are bounded server-side searches (at most a handful per group); the directory is never sent whole. Booking details on the person card respect the site's coworker-visibility setting (§8.4) unless the viewer is that person or an admin of the site.
 
 The map should display desk states such as:
 
@@ -1025,6 +1036,8 @@ The map should display desk states such as:
 - Restricted / not eligible
 - Selected
 - Inactive
+
+Desk states are relative to the **selected date and time window** (From/To on the Floor Map). A booking only makes a desk "Booked" while it overlaps that window: a desk booked 09:00–18:00 tomorrow is still available today, and a desk booked 16:00–18:00 today is still available before 16:00, so other employees can book the remaining times. Defaults: today → the current slot plus the next hour; any other date → the whole operating day. A desk is never marked as taken for a whole day merely because it has a booking later that day.
 
 Do not rely on colour alone; use border/icon/tooltips/accessibility states where appropriate.
 
@@ -1125,8 +1138,9 @@ For Standard User:
 
 For Booking Manager/System Admin as permitted:
 
-- Occupant is searchable
+- Occupant is searchable: a server-side typeahead over the employee directory (name, email, department). Only employees that exist in the system can be selected; the full directory is never sent to the client.
 - Restriction checks use the selected occupant
+- Guests are free text (they need not exist in the system) and may only be booked into desks that carry no people-based restriction at all — no department, assigned-occupant or custom block on any day, and not an assigned desk. Day-based "Anyone" shifts still apply. The server rejects a guest booking on any other desk with an explanatory message, and Find Available Desks / eligibility checks evaluate for the guest when that mode is selected.
 
 ---
 
@@ -1212,6 +1226,7 @@ Useful display:
 - Start/end time
 - Status
 - Check-in status if implemented
+- Locate on map: an upcoming booking's desk links to the Floor Map, which opens on that site/floor/date/time with the desk highlighted and its details shown
 
 Standard User can cancel only their own eligible future bookings.
 
@@ -1246,6 +1261,10 @@ Facility Admin:
 
 Standard User:
 - can cancel own eligible bookings only
+
+**End Booking** releases a desk whose booking is already in progress (confirmed or checked in) before its scheduled end; the booking becomes COMPLETED and the action is audited with the actor. The same scope applies: the occupant/creator, a System Admin, or a Facility Admin of the desk's site. A booking that has not started is cancelled, not ended.
+
+On the Floor Map desk panel every employee can see who holds a desk for the selected time (name, email, department, title, and who booked on their behalf), subject to the site's coworker-visibility setting (§8.4). Cancel / End Booking buttons are only offered to actors the server says may manage that booking, and the mutations re-check on the server regardless.
 
 All checks must be server-side.
 

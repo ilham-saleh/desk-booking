@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Menu, ChevronDown, Plus, Edit2, Trash2, MousePointer2, Grid3x3, Home } from "lucide-react";
 
-export type EditorObjectType = "desks" | "utilities" | "rooms" | null;
+export type EditorObjectType = "desks" | "utilities" | "rooms" | "neighbourhoods" | null;
 export type EditorAction = "create" | "edit" | "delete" | null;
 /** Select = navigate/inspect only; Edit = create, drag, edit, delete. Kept separate so nothing moves by accident. */
 export type EditorMode = "select" | "edit";
@@ -127,7 +127,11 @@ export function EditorLayout({
 
                           <div className="space-y-1 border-t pt-2">
                             <p className="px-2 text-xs font-semibold text-gray-600">Neighbourhoods</p>
-                            <p className="px-2 text-xs text-gray-400">Not available yet</p>
+                            <div className="space-y-1">
+                              {toolButton("neighbourhoods", "create", "Create", Plus)}
+                              {toolButton("neighbourhoods", "edit", "Edit", Edit2)}
+                              {toolButton("neighbourhoods", "delete", "Delete", Trash2)}
+                            </div>
                           </div>
 
                           <div className="space-y-1 border-t pt-2">

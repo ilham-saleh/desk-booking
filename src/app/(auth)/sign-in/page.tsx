@@ -22,7 +22,13 @@ async function signInWithDevCredentials(formData: FormData) {
   await signIn("dev-credentials", { email, redirectTo: "/home" });
 }
 
-export default async function SignInPage() {
+const SIGN_OUT_NOTICES: Record<string, string> = {
+  inactive: "Your previous session belonged to an account that no longer exists or has been deactivated. Please sign in again.",
+};
+
+export default async function SignInPage({ searchParams }: { searchParams: Promise<{ reason?: string }> }) {
+  const { reason } = await searchParams;
+  const notice = reason ? SIGN_OUT_NOTICES[reason] : undefined;
   const devUsers = devLoginEnabled
     ? await db.user.findMany({
         select: { email: true, name: true, role: true, organization: { select: { name: true } } },
@@ -37,6 +43,11 @@ export default async function SignInPage() {
         <CardDescription>Auth.js — Google + Microsoft Entra ID, per-organization SSO.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
+        {notice && (
+          <p role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            {notice}
+          </p>
+        )}
         {googleEnabled && (
           <form action={signInWithGoogle}>
             <Button variant="outline" type="submit" className="w-full">

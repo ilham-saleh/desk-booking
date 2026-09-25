@@ -2,13 +2,17 @@ import { TRPCError } from "@trpc/server";
 
 import type { CancelBookingInput } from "@/lib/schemas/booking";
 import { BookingStatus } from "@/generated/prisma/enums";
-import { isSiteAdminRole, type Session } from "@/server/auth/roles";
-import { assertSiteAdmin } from "@/server/api/trpc";
+import type { Session } from "@/server/auth/roles";
+import { assertCanManageBooking } from "@/server/auth/authorization";
 import type { ScopedDb } from "@/server/tenancy";
 
 const TERMINAL_STATUSES: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.AUTO_CANCELLED, BookingStatus.COMPLETED];
 
-/** Cancellation, allowed any time before start (CLAUDE.md rule 5); audited (rule 13). */
+/**
+ * Cancellation of a booking that hasn't started yet (a booking in progress is
+ * released with `endBookingEarly` instead); audited (CLAUDE.md rule 13).
+ * Owner, or an admin managing the desk's site — see `canManageBooking`.
+ */
 export async function cancelBooking(
   ctx: { db: ScopedDb; session: Session; organizationId: string },
   input: CancelBookingInput,
@@ -22,19 +26,16 @@ export async function cancelBooking(
   }
 
   const actorId = ctx.session.user.id;
-  const isOwner = booking.userId === actorId || booking.bookedById === actorId;
-  if (!isOwner) {
-    if (!isSiteAdminRole(ctx.session)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "You can only cancel your own bookings." });
-    }
-    await assertSiteAdmin(ctx, booking.desk.floor.siteId);
-  }
+  await assertCanManageBooking(ctx, booking, booking.desk.floor.siteId, "cancel");
 
   if (TERMINAL_STATUSES.includes(booking.status)) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "This booking is already cancelled or completed." });
   }
   if (booking.startAt.getTime() <= Date.now()) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "This booking has already started and can no longer be cancelled." });
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "This booking has already started — use End Booking to release the desk.",
+    });
   }
 
   const cancelled = await ctx.db.booking.update({

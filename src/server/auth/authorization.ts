@@ -103,6 +103,35 @@ export async function canBookForUser(ctx: AuthzCtx, occupantUserId: string | nul
   return permission !== null;
 }
 
+type BookingActors = { userId: string | null; bookedById: string };
+
+/**
+ * Who may cancel, end or check in a booking:
+ *  - the occupant, or whoever made the booking on their behalf;
+ *  - System Admin anywhere;
+ *  - Facility Admin at the desk's site, when they manage it.
+ * Standard users and Booking Managers never act on other people's bookings.
+ */
+export async function canManageBooking(ctx: AuthzCtx, booking: BookingActors, siteId: string): Promise<boolean> {
+  const actorId = ctx.session.user.id;
+  if (booking.userId === actorId || booking.bookedById === actorId) return true;
+  if (!isFacilityAdminRole(ctx.session)) return false;
+  return canManageSite(ctx, siteId);
+}
+
+export async function assertCanManageBooking(
+  ctx: AuthzCtx,
+  booking: BookingActors,
+  siteId: string,
+  action: "cancel" | "end" | "check in to",
+): Promise<void> {
+  if (await canManageBooking(ctx, booking, siteId)) return;
+  if (isFacilityAdminRole(ctx.session)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "You don't manage this site." });
+  }
+  throw new TRPCError({ code: "FORBIDDEN", message: `You can only ${action} your own bookings.` });
+}
+
 export async function assertCanBookForUser(ctx: AuthzCtx, occupantUserId: string | null, site: { id: string; name: string }): Promise<void> {
   if (await canBookForUser(ctx, occupantUserId, site.id)) return;
   const role = ctx.session.user.role;

@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Bell } from "lucide-react";
 
 import type { Role } from "@/generated/prisma/enums";
 import { roleLabel } from "@/lib/roles";
+import { signOutAction } from "@/server/auth/actions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,8 +18,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { MobileSidebar } from "@/components/layout/sidebar";
+import { GlobalSearch } from "@/components/search/global-search";
 
 function initials(name: string) {
   return name
@@ -30,6 +32,7 @@ function initials(name: string) {
 
 export function TopBar({ user }: { user: { name: string; email: string; role: Role } }) {
   const unreadNotifications = 0;
+  const router = useRouter();
 
   return (
     <header className="flex h-14 items-center gap-3 border-b px-4">
@@ -39,10 +42,18 @@ export function TopBar({ user }: { user: { name: string; email: string; role: Ro
         Desk Booking
       </Link>
 
-      <div className="relative max-w-sm flex-1">
-        <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-        <Input placeholder="Search desks, people, bookings…" className="pl-8" disabled />
-      </div>
+      {/* Picking a result deep-links into the Floor Map: the desk is highlighted, or the person's card opens. */}
+      <GlobalSearch
+        className="max-w-sm flex-1"
+        hideLabel
+        placeholder="Search desks or people…"
+        onPickDesk={(desk) =>
+          router.push(
+            `/floor-map?${new URLSearchParams({ site: desk.floor.site.id, floor: desk.floor.id, desk: desk.id })}`,
+          )
+        }
+        onPickPerson={(person) => router.push(`/floor-map?${new URLSearchParams({ person: person.id })}`)}
+      />
 
       <Button variant="ghost" size="icon" aria-label="Notifications" className="relative" disabled>
         <Bell className="size-5" />
@@ -72,7 +83,7 @@ export function TopBar({ user }: { user: { name: string; email: string; role: Ro
           <DropdownMenuItem disabled>Account</DropdownMenuItem>
           <DropdownMenuItem disabled>Preferences</DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem disabled>Log out</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void signOutAction()}>Log out</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </header>

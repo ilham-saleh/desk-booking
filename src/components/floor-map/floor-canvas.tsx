@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Konva from "konva";
 import { Circle, Image as KonvaImage, Layer, Rect, Stage, Text } from "react-konva";
 import useImage from "use-image";
 
@@ -39,6 +40,13 @@ export interface FloorCanvasUtility {
   y: number;
 }
 
+export interface FloorCanvasNeighbourhood {
+  id: string;
+  name: string;
+  color: string;
+  deskIds: string[];
+}
+
 const DESK_COLORS: Record<DeskState, string> = {
   [DeskState.AVAILABLE]: "#22c55e",
   [DeskState.BOOKED]: "#ef4444",
@@ -47,6 +55,7 @@ const DESK_COLORS: Record<DeskState, string> = {
 };
 
 const RESTRICTED_STROKE = "#7c3aed";
+const FOCUS_STROKE = "#2563eb";
 const DESK_RADIUS = 14;
 
 /**
@@ -61,10 +70,13 @@ export function FloorCanvas({
   desks,
   rooms,
   utilities,
+  neighbourhoods = [],
   selectedDeskId,
   onSelectDesk,
-  /** When set, only desks with freeForRequestedSlot === true are interactive/highlighted — the "Book a Desk" flow. */
+  /** When set, only desks free for the slot and eligible for the occupant are interactive/highlighted — the "Book a Desk" flow. */
   highlightMode = false,
+  /** A desk to draw attention to with a pulsing ring — e.g. "locate on map" from My Bookings. */
+  focusDeskId = null,
 }: {
   renderedImageKey: string | null;
   imageWidth: number | null;
@@ -72,9 +84,11 @@ export function FloorCanvas({
   desks: FloorCanvasDesk[];
   rooms: FloorCanvasRoom[];
   utilities: FloorCanvasUtility[];
+  neighbourhoods?: FloorCanvasNeighbourhood[];
   selectedDeskId: string | null;
   onSelectDesk: (deskId: string) => void;
   highlightMode?: boolean;
+  focusDeskId?: string | null;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -107,6 +121,33 @@ export function FloorCanvas({
         <Layer>
           {image && <KonvaImage image={image} width={imageWidth} height={imageHeight} />}
 
+          {neighbourhoods.map((neighbourhood) => {
+            const neighbourhoodDesks = desks.filter((d) => neighbourhood.deskIds.includes(d.id));
+            if (neighbourhoodDesks.length === 0) return null;
+
+            const xs = neighbourhoodDesks.map((d) => d.x);
+            const ys = neighbourhoodDesks.map((d) => d.y);
+            const minX = Math.min(...xs) - 25;
+            const maxX = Math.max(...xs) + 25;
+            const minY = Math.min(...ys) - 25;
+            const maxY = Math.max(...ys) + 25;
+
+            return (
+              <Rect
+                key={neighbourhood.id}
+                x={minX}
+                y={minY}
+                width={maxX - minX}
+                height={maxY - minY}
+                fill={neighbourhood.color}
+                opacity={0.1}
+                stroke={neighbourhood.color}
+                strokeWidth={1.5}
+                listening={false}
+              />
+            );
+          })}
+
           {rooms.map((room) => (
             <Rect
               key={room.id}
@@ -138,7 +179,7 @@ export function FloorCanvas({
           ))}
 
           {desks.map((desk) => {
-            const eligible = !highlightMode || desk.freeForRequestedSlot;
+            const eligible = !highlightMode || (desk.freeForRequestedSlot === true && desk.eligibleForViewer !== false);
             const isSelected = desk.id === selectedDeskId;
             const restricted = desk.eligibleForViewer === false && desk.state !== DeskState.INACTIVE;
             const stroke = isSelected ? "#111827" : restricted ? RESTRICTED_STROKE : desk.requiresCheckIn ? "#ffffff" : undefined;
@@ -196,6 +237,11 @@ export function FloorCanvas({
                 listening={false}
               />
             ))}
+          {desks
+            .filter((desk) => desk.id === focusDeskId)
+            .map((desk) => (
+              <PulseRing key={`${desk.id}-focus`} x={desk.x} y={desk.y} />
+            ))}
           {desks.map((desk) => (
             <Text
               key={`${desk.id}-label`}
@@ -216,11 +262,37 @@ export function FloorCanvas({
   );
 }
 
+/**
+ * Expanding, fading ring around a desk — animated on the Konva layer (not React
+ * state) so it costs no re-renders. Runs until the desk loses focus.
+ */
+function PulseRing({ x, y }: { x: number; y: number }) {
+  const ref = useRef<Konva.Circle>(null);
+  useEffect(() => {
+    const node = ref.current;
+    const layer = node?.getLayer();
+    if (!node || !layer) return;
+    const PERIOD_MS = 1400;
+    const animation = new Konva.Animation((frame) => {
+      const t = ((frame?.time ?? 0) % PERIOD_MS) / PERIOD_MS;
+      node.radius(DESK_RADIUS + 4 + t * 22);
+      node.opacity(1 - t);
+      node.strokeWidth(4 - t * 2.5);
+    }, layer);
+    animation.start();
+    return () => {
+      animation.stop();
+    };
+  }, []);
+  return <Circle ref={ref} x={x} y={y} radius={DESK_RADIUS + 4} stroke={FOCUS_STROKE} strokeWidth={4} listening={false} />;
+}
+
 function FloorLegend({ className }: { className?: string }) {
+  // SCHEDULED is a legacy enum value the server no longer produces — a desk is
+  // only "Booked" while a booking overlaps the selected time window.
   const entries: Array<[DeskState, string]> = [
-    [DeskState.AVAILABLE, "Available"],
-    [DeskState.BOOKED, "Booked"],
-    [DeskState.SCHEDULED, "Scheduled"],
+    [DeskState.AVAILABLE, "Available for selected time"],
+    [DeskState.BOOKED, "Booked for selected time"],
     [DeskState.INACTIVE, "Inactive"],
   ];
   return (

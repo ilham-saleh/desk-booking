@@ -42,6 +42,14 @@ let floor: { id: string };
 let user: SessionUser;
 let futureWeekday: string;
 
+/** Each test books the same date, and one user may not hold overlapping bookings — so every booker is a fresh user. */
+async function newStandardUser(label: string): Promise<SessionUser> {
+  const row = await db.user.create({
+    data: { organizationId: org.id, email: `${label}@get-floor-availability.test`, name: `User ${label}`, role: Role.STANDARD_USER },
+  });
+  return { id: row.id, name: row.name, email: row.email, role: row.role, organizationId: org.id };
+}
+
 describe("booking.getFloorAvailability", () => {
   beforeAll(async () => {
     await db.organization.deleteMany({ where: { slug: "get-floor-availability-test" } });
@@ -62,6 +70,7 @@ describe("booking.getFloorAvailability", () => {
 
   afterAll(async () => {
     await db.booking.deleteMany({ where: { organizationId: org.id } });
+    await db.permission.deleteMany({ where: { organizationId: org.id } });
     await db.desk.deleteMany({ where: { organizationId: org.id } });
     await db.floor.deleteMany({ where: { organizationId: org.id } });
     await db.site.deleteMany({ where: { organizationId: org.id } });
@@ -70,7 +79,7 @@ describe("booking.getFloorAvailability", () => {
     await db.$disconnect();
   });
 
-  it("includes a same-day booking in the desk's bookings list and reflects it in state", async () => {
+  it("includes a same-day booking in the desk's bookings list and marks the desk BOOKED for the whole-day window", async () => {
     const desk = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: "F1", x: 0, y: 0 } });
     const booking = await callerFor(user).booking.create({
       deskId: desk.id,
@@ -83,10 +92,107 @@ describe("booking.getFloorAvailability", () => {
     const deskAvailability = availability.desks.find((d) => d.deskId === desk.id);
 
     expect(deskAvailability).toBeDefined();
-    expect(deskAvailability?.state).toBe("SCHEDULED");
+    expect(deskAvailability?.state).toBe("BOOKED");
     expect(deskAvailability?.bookings).toHaveLength(1);
     expect(deskAvailability?.bookings[0]?.id).toBe(booking.id);
     expect(deskAvailability?.bookings[0]?.occupantLabel).toBe(user.name);
+    expect(deskAvailability?.bookings[0]?.isOwn).toBe(true);
+    expect(deskAvailability?.bookings[0]?.canManage).toBe(true);
+    expect(deskAvailability?.bookings[0]?.occupant?.email).toBe(user.email);
+  });
+
+  it("only marks the desk BOOKED for a time window the booking actually overlaps", async () => {
+    const desk = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: "F3", x: 2, y: 2 } });
+    const booker = await newStandardUser("f3-booker");
+    // 09:00–18:00 booking
+    await callerFor(booker).booking.create({ deskId: desk.id, date: futureWeekday, startMinutes: 540, endMinutes: 1080 });
+
+    const during = await callerFor(user).booking.getFloorAvailability({
+      floorId: floor.id,
+      date: futureWeekday,
+      startMinutes: 960,
+      endMinutes: 1080,
+    });
+    expect(during.desks.find((d) => d.deskId === desk.id)?.state).toBe("BOOKED");
+    expect(during.desks.find((d) => d.deskId === desk.id)?.freeForRequestedSlot).toBe(false);
+
+    const before = await callerFor(user).booking.getFloorAvailability({
+      floorId: floor.id,
+      date: futureWeekday,
+      startMinutes: 420,
+      endMinutes: 540,
+    });
+    expect(before.desks.find((d) => d.deskId === desk.id)?.state).toBe("AVAILABLE");
+    expect(before.desks.find((d) => d.deskId === desk.id)?.freeForRequestedSlot).toBe(true);
+  });
+
+  it("does not colour a desk on one date because of a booking on another date", async () => {
+    const desk = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: "F4", x: 3, y: 3 } });
+    const laterWeekday = nextWeekday(new Date(`${futureWeekday}T12:00:00Z`));
+    const userA = await newStandardUser("f4-user-a");
+    // User A books "tomorrow" 09:00–18:00 …
+    await callerFor(userA).booking.create({ deskId: desk.id, date: laterWeekday, startMinutes: 540, endMinutes: 1080 });
+
+    // … must leave the earlier date free, for the whole day and for a specific slot.
+    const wholeDay = await callerFor(user).booking.getFloorAvailability({ floorId: floor.id, date: futureWeekday });
+    expect(wholeDay.desks.find((d) => d.deskId === desk.id)?.state).toBe("AVAILABLE");
+    expect(wholeDay.desks.find((d) => d.deskId === desk.id)?.bookings).toHaveLength(0);
+
+    const slot = await callerFor(user).booking.getFloorAvailability({
+      floorId: floor.id,
+      date: futureWeekday,
+      startMinutes: 960,
+      endMinutes: 1080,
+    });
+    expect(slot.desks.find((d) => d.deskId === desk.id)?.state).toBe("AVAILABLE");
+
+    // … and User B really can book the earlier date at an overlapping wall-clock time (16:00–18:00).
+    const userB = await newStandardUser("f4-user-b");
+    const booked = await callerFor(userB).booking.create({ deskId: desk.id, date: futureWeekday, startMinutes: 960, endMinutes: 1080 });
+    expect(booked.status).toBe("CONFIRMED");
+  });
+
+  it("hides coworker identity when the site disallows it, except from the owner and site admins", async () => {
+    const privateSite = await db.site.create({
+      data: {
+        organizationId: org.id,
+        name: "Private Site",
+        timeZone: "Europe/London",
+        operatingHoursStart: 420,
+        operatingHoursEnd: 1080,
+        allowEmployeeSeeBookings: false,
+      },
+    });
+    const privateFloor = await db.floor.create({ data: { organizationId: org.id, siteId: privateSite.id, name: "Floor", sortOrder: 0 } });
+    const desk = await db.desk.create({ data: { organizationId: org.id, floorId: privateFloor.id, number: "P1", x: 0, y: 0 } });
+    const owner = await newStandardUser("p1-owner");
+    await callerFor(owner).booking.create({ deskId: desk.id, date: futureWeekday, startMinutes: 600, endMinutes: 660 });
+
+    const coworker = await newStandardUser("p1-coworker");
+    const adminRow = await db.user.create({
+      data: { organizationId: org.id, email: "admin@get-floor-availability.test", name: "Admin", role: Role.SITE_ADMIN },
+    });
+    await db.permission.create({ data: { organizationId: org.id, userId: adminRow.id, siteId: privateSite.id, type: "FACILITY_ADMIN" } });
+    const admin = { id: adminRow.id, name: adminRow.name, email: adminRow.email, role: adminRow.role, organizationId: org.id };
+
+    const seenByCoworker = (await callerFor(coworker).booking.getFloorAvailability({ floorId: privateFloor.id, date: futureWeekday })).desks.find(
+      (d) => d.deskId === desk.id,
+    )!.bookings[0]!;
+    expect(seenByCoworker.occupantLabel).toBe("Booked");
+    expect(seenByCoworker.occupant).toBeNull();
+    expect(seenByCoworker.canManage).toBe(false);
+
+    const seenByOwner = (await callerFor(owner).booking.getFloorAvailability({ floorId: privateFloor.id, date: futureWeekday })).desks.find(
+      (d) => d.deskId === desk.id,
+    )!.bookings[0]!;
+    expect(seenByOwner.occupant?.name).toBe(owner.name);
+    expect(seenByOwner.canManage).toBe(true);
+
+    const seenByAdmin = (await callerFor(admin).booking.getFloorAvailability({ floorId: privateFloor.id, date: futureWeekday })).desks.find(
+      (d) => d.deskId === desk.id,
+    )!.bookings[0]!;
+    expect(seenByAdmin.occupant?.email).toBe(owner.email);
+    expect(seenByAdmin.canManage).toBe(true);
   });
 
   it("includes a booking that starts right at the site's day boundary (00:00 local)", async () => {

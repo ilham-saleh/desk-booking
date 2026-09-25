@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
+import { MapPinIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { currentMinutesInTimeZone } from "@/lib/time-slots";
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +13,28 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { StatusBadge } from "@/components/booking/desk-panel";
 
 type When = "upcoming" | "past";
+
+/** Deep-link query that opens the Floor Map on this booking's site/floor/date/time with the desk highlighted. */
+function locateOnMapQuery(booking: {
+  deskId: string;
+  startAt: Date;
+  endAt: Date;
+  desk: { floor: { id: string; siteId: string; site: { timeZone: string } } };
+}): Record<string, string> {
+  const timeZone = booking.desk.floor.site.timeZone;
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(booking.startAt),
+  );
+  const endMinutes = currentMinutesInTimeZone(timeZone, new Date(booking.endAt));
+  return {
+    site: booking.desk.floor.siteId,
+    floor: booking.desk.floor.id,
+    desk: booking.deskId,
+    date,
+    start: String(currentMinutesInTimeZone(timeZone, new Date(booking.startAt))),
+    end: String(endMinutes === 0 ? 24 * 60 : endMinutes),
+  };
+}
 
 export default function BookingsPage() {
   const [tab, setTab] = useState<When>("upcoming");
@@ -41,6 +66,7 @@ export default function BookingsPage() {
   });
 
   const actionsPending = cancelBooking.isPending || checkIn.isPending || endBooking.isPending;
+  const now = new Date();
 
   return (
     <div className="flex flex-col gap-4">
@@ -88,7 +114,20 @@ export default function BookingsPage() {
                     );
                   return (
                     <TableRow key={booking.id}>
-                      <TableCell>{booking.desk.number}</TableCell>
+                      <TableCell>
+                        {tab === "upcoming" ? (
+                          <Link
+                            href={{ pathname: "/floor-map", query: locateOnMapQuery(booking) }}
+                            className="inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline"
+                            title="Locate this desk on the floor map"
+                          >
+                            <MapPinIcon aria-hidden className="size-3.5" />
+                            {booking.desk.number}
+                          </Link>
+                        ) : (
+                          booking.desk.number
+                        )}
+                      </TableCell>
                       <TableCell>
                         {booking.desk.floor.site.name} / {booking.desk.floor.name}
                       </TableCell>
@@ -102,7 +141,7 @@ export default function BookingsPage() {
                       {tab === "upcoming" && (
                         <TableCell>
                           <div className="flex justify-end gap-2">
-                            {booking.status === "CONFIRMED" && (
+                            {booking.status === "CONFIRMED" && new Date(booking.startAt) > now && (
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -121,7 +160,9 @@ export default function BookingsPage() {
                                 Check In
                               </Button>
                             )}
-                            {booking.status === "CHECKED_IN" && (
+                            {/* A booking in progress (confirmed or checked in) can be ended early to free the desk. */}
+                            {(booking.status === "CHECKED_IN" ||
+                              (booking.status === "CONFIRMED" && new Date(booking.startAt) <= now)) && (
                               <Button
                                 size="sm"
                                 variant="destructive"

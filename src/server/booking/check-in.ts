@@ -2,8 +2,8 @@ import { TRPCError } from "@trpc/server";
 
 import type { CheckInInput } from "@/lib/schemas/booking";
 import { BookingStatus } from "@/generated/prisma/enums";
-import { isSiteAdminRole, type Session } from "@/server/auth/roles";
-import { assertSiteAdmin } from "@/server/api/trpc";
+import type { Session } from "@/server/auth/roles";
+import { assertCanManageBooking } from "@/server/auth/authorization";
 import type { ScopedDb } from "@/server/tenancy";
 
 /** Check-in, keeping a desk that requires it (CLAUDE.md rule 6); audited (rule 13). */
@@ -20,13 +20,7 @@ export async function checkInToBooking(
   }
 
   const actorId = ctx.session.user.id;
-  const isOwner = booking.userId === actorId || booking.bookedById === actorId;
-  if (!isOwner) {
-    if (!isSiteAdminRole(ctx.session)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "You can only check in to your own bookings." });
-    }
-    await assertSiteAdmin(ctx, booking.desk.floor.siteId);
-  }
+  await assertCanManageBooking(ctx, booking, booking.desk.floor.siteId, "check in to");
 
   if (booking.status !== BookingStatus.CONFIRMED) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "This booking is already checked in, cancelled, or completed." });
