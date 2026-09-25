@@ -14,7 +14,7 @@ import { FloorCanvasEditor, type EditorDesk } from "@/components/admin/editor/fl
 import { FloorPlanUpload } from "@/components/admin/editor/floor-plan-upload";
 import { EditorLayout, type EditorAction, type EditorMode, type EditorObjectType } from "@/components/admin/editor/editor-layout";
 import { DeleteDeskDialog } from "@/components/admin/editor/delete-desk-dialog";
-import { NeighbourhoodEditorDialog } from "@/components/admin/editor/neighbourhood-editor-dialog";
+import { NeighbourhoodEditorDialogV2 } from "@/components/admin/editor/neighbourhood-editor-dialog-v2";
 import { NeighbourhoodDeskSelector } from "@/components/admin/editor/neighbourhood-desk-selector";
 import { DeskEditModal } from "@/components/admin/desk-edit-modal";
 
@@ -347,7 +347,7 @@ export default function AdminEditorPage() {
       />
 
       {selectedFloorId && (
-        <NeighbourhoodEditorDialog
+        <NeighbourhoodEditorDialogV2
           open={!!editingNeighbourhoodId}
           neighbourhood={editingNeighbourhoodId === "__new__" ? null : editingNeighbourhood}
           floorId={selectedFloorId}
