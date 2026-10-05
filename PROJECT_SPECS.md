@@ -36,7 +36,7 @@ The application must follow these principles:
 - Floor-plan object positions must persist and remain aligned when the viewport changes.
 - Users should understand why a desk is available, unavailable or restricted.
 - Admin workflows should be practical for managing many desks and employees.
-- Employee data coming from HRIS should not be manually duplicated across the product.
+- Employee profile data comes from Microsoft Entra ID and should not be manually duplicated across the product.
 - Authentication should be company-isolated.
 - The UI should be clean, professional and consistent with the existing application.
 
@@ -100,110 +100,96 @@ The dedicated Floor Map page is the only place where the full interactive floor 
 
 # 5. Authentication
 
-## 5.1 Microsoft Entra ID
+## 5.1 Microsoft Entra ID (only sign-in method)
 
-Microsoft Entra ID should be the primary company sign-in method.
-
-Requirements:
-
-- Company-isolated Entra tenant
-- Only users from the configured company tenant should authenticate
-- Match the authenticated user to an existing employee record using work email and/or Entra object identifier
-- No unrestricted public Microsoft account login
-- No automatic public account creation
-
-A valid Entra login does not automatically grant admin permissions. Application roles remain controlled by the application's user/permission records.
-
-## 5.2 Company email + password
-
-Also support email/password authentication for approved company employees.
+Microsoft Entra ID SSO is the **only** sign-in and sign-up method. There is no HRIS integration, no email/password login and no separate registration form.
 
 Requirements:
 
-- No public self-registration
-- User must already exist in the employee/user directory
-- Email must be an approved company email
-- Passwords must be securely hashed
-- Password reset should use a secure token flow
-- Rate-limit login attempts
-- Sessions must be secure
-- Disabled/inactive employees cannot authenticate
+- Company-isolated Entra tenant, configured server-side
+- Only users from the configured company tenant can authenticate
+- Validate issuer and audience of the Entra token
+- No personal/public Microsoft account login
+- No public self-registration outside the company tenant
+- Disabled/inactive users cannot authenticate
+- Sessions must be secure; logout and session expiry must work correctly
+
+A development-only sign-in may exist for local work. It must be explicitly enabled and must never be available in production.
+
+## 5.2 Sign-up (first sign-in provisioning)
+
+"Sign-up" means a company employee's first successful Entra sign-in.
+
+On first sign-in:
+
+1. Validate the token belongs to the configured company tenant.
+2. Look for an existing user by Entra object ID, then by verified work email.
+3. If none exists, create the user from the Entra profile.
+4. Assign the default role `STANDARD_USER`.
+5. Grant no admin permissions or site scope beyond the default.
+
+If a matching user exists but is inactive/no-access, reject the sign-in. Signing in again must never reactivate a deactivated user or create a second record for them.
+
+Tenant-level access control (for example "assignment required" on the Entra enterprise application, or a permitted group) can further limit who may sign up.
+
+A valid Entra login does not grant admin permissions. Application roles stay controlled by the application's user/permission records and are never derived from Entra claims unless that mapping is explicitly configured.
 
 ## 5.3 Identity matching
 
-Employee identity should be based on stable identifiers where available:
+Match users on stable identifiers, in this order:
 
-1. HRIS employee ID
-2. Entra object ID
-3. Verified company work email
+1. Entra object ID (`oid`) within the company tenant
+2. Verified company work email
 
-Email changes must not accidentally create duplicate employees when a stable HRIS identifier exists.
+Store the Entra object ID on the user at first sign-in. A changed work email must not create a duplicate user when the object ID already matches; update the email instead.
 
 ---
 
-# 6. Employee Directory / HRIS Sync
+# 6. Employee Directory (Entra-sourced)
 
-Employees are primarily sourced from an HRIS data sheet.
+The employee directory is the application's own `User` table. It is populated by Entra sign-in, not by importing HRIS files or spreadsheets.
 
-The application should support importing/syncing employee information from CSV/XLSX or an equivalent HRIS export.
+Consequence: an employee appears in the directory (Users page, occupant search, restriction value pickers) after their first sign-in. Pre-provisioning employees who have not signed in yet is out of scope unless requested later.
 
-## 6.1 HRIS-owned fields
+## 6.1 Entra-owned fields
 
-Typical fields include:
+Refreshed from the Entra profile (ID token claims and/or Microsoft Graph `/me`) on each sign-in:
 
-- Employee ID
-- First name
-- Last name
+- Entra object ID
 - Display name
-- Work email
-- Department
-- Job title
-- Phone
-- Manager
-- Office/location
-- Employment status
-- Start date if available
-- End date if available
-- Other company employee fields present in the data source
+- First name / last name
+- Work email / UPN
+- Department, if set in Entra
+- Job title, if set in Entra
+- Office location, if set in Entra
+- Phone, if set in Entra
+- Employee ID, if set in Entra
 
-The model should be extensible so additional HRIS fields can be added later.
+Attributes missing in Entra stay empty; do not invent values. The model should be extensible so more Entra attributes can be added later.
 
 ## 6.2 App-owned fields
 
-Do not overwrite app-owned values during HRIS sync:
+Never overwrite these from Entra data during sign-in:
 
 - Application role
+- Active/no-access state
 - Site permissions
 - Floor permissions
 - Booking delegation settings
-- Local application preferences
-- Authentication configuration
+- Timezone override and other application preferences
 - Admin flags
 - Audit history
 
-## 6.3 Sync behaviour
+## 6.3 Profile refresh behaviour
 
-A sync should:
+On each successful sign-in:
 
-1. Parse the uploaded data.
-2. Validate required fields.
-3. Match existing employees primarily by employee ID, then email if necessary.
-4. Create missing employees.
-5. Update HRIS-owned employee data.
-6. Avoid duplicate users.
-7. Report rows that failed validation.
-8. Preserve application permissions.
-9. Optionally mark employees inactive if they no longer appear in an authoritative full export.
+1. Match the user (see 5.3).
+2. Update Entra-owned fields whose values changed.
+3. Leave app-owned fields untouched.
+4. Record last login.
 
-Prefer an import preview showing:
-
-- employees to create
-- employees to update
-- employees unchanged
-- invalid records
-- employees potentially to deactivate
-
-Do not silently destroy employee records.
+Do not delete users. Removing an employee's access is done by disabling them in Entra and/or marking them inactive in the application.
 
 ---
 
@@ -765,9 +751,9 @@ Minimum rule fields:
 - Department
 - Email
 - User
-- Job title if available from HRIS
+- Job title if available from Entra
 
-The implementation should be extensible to additional HRIS fields later.
+The implementation should be extensible to additional Entra profile fields later.
 
 Minimum operators:
 
@@ -783,7 +769,7 @@ Logical connectors:
 - AND
 - OR
 
-Values should use searchable selects populated from real HRIS/user data.
+Values should use searchable selects populated from real user/department data.
 
 Do not require admins to type internal database IDs.
 
@@ -1279,7 +1265,7 @@ Use one **Users** area.
 The Users page combines:
 
 - employee directory
-- HRIS-synced employee details
+- Entra-sourced employee details
 - application roles
 - workplace permissions
 - booking delegation
@@ -1324,22 +1310,20 @@ Facility Admin sees employees relevant to their authorized workplace scope accor
 
 Selecting a user opens a user details/edit view.
 
-## HRIS details
+## Entra profile details
 
-Read-mostly fields sourced from HRIS:
+Read-only fields sourced from Microsoft Entra ID (see section 6.1):
 
-- Employee ID
+- Employee ID, if set in Entra
 - First name
 - Last name
 - Email
 - Department
 - Job title
 - Phone
-- Manager
-- Workplace/location
-- Employment state
+- Office location
 
-These fields should normally be changed through the HRIS sync rather than manually in the desk-booking app.
+These fields are changed in Entra and refresh on the user's next sign-in. They are not edited manually in the desk-booking app.
 
 ## App-managed details
 
@@ -1435,10 +1419,11 @@ Recommended:
 ```text
 Department
 - id
-- externalHrisId optional
 - name
 - active
 ```
+
+A user's department comes from the Entra `department` attribute, refreshed on each sign-in. Restriction value pickers offer the departments present on active users; admins may also create Department records in the app.
 
 Users link to Department.
 
@@ -1473,7 +1458,6 @@ Booking
 UserSitePermission
 UserFloorPermission
 DelegateAssignment
-HrisImport
 AuditEvent
 ```
 
@@ -1620,7 +1604,7 @@ Useful audit events:
 - Desk created/deleted
 - Restriction changed
 - Booking cancelled by admin
-- HRIS sync executed
+- User provisioned on first Entra sign-in
 
 ---
 
@@ -1711,7 +1695,7 @@ Build in vertical, testable slices.
 
 ## Phase 6 — Users
 
-- HRIS import/sync
+- Entra first sign-in provisioning and profile refresh
 - Combined Users page
 - Roles
 - Site/floor permissions
@@ -1790,13 +1774,25 @@ Facility Admin assigned only London attempts to mutate New York floor through AP
 Expected:
 - server denies access
 
-## HRIS sync
+## Entra sign-up and profile refresh
 
-Existing employee's title changes in HRIS export.
+New employee from the company tenant signs in with Entra for the first time.
+
+Expected:
+- one user is created with role `STANDARD_USER`
+- no admin permissions are granted
+
+Existing employee's job title changes in Entra, then they sign in again.
 
 Expected:
 - title updates
 - role/floor permissions remain unchanged
+
+User from a different tenant, or a deactivated user, signs in.
+
+Expected:
+- sign-in is rejected
+- no user is created or reactivated
 
 ## User access
 

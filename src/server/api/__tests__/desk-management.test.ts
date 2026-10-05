@@ -73,8 +73,8 @@ describe("desk management", () => {
   beforeAll(async () => {
     await cleanup();
 
-    orgA = await db.organization.create({ data: { name: "Desk Mgmt A", slug: SLUGS[0]!, ssoGoogleDomains: [] } });
-    orgB = await db.organization.create({ data: { name: "Desk Mgmt B", slug: SLUGS[1]!, ssoGoogleDomains: [] } });
+    orgA = await db.organization.create({ data: { name: "Desk Mgmt A", slug: SLUGS[0]! } });
+    orgB = await db.organization.create({ data: { name: "Desk Mgmt B", slug: SLUGS[1]! } });
 
     siteA = await db.site.create({
       data: { organizationId: orgA.id, name: "London", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1140 },

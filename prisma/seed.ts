@@ -13,17 +13,20 @@ import { FLOOR_LAYOUTS } from "./seed-data/floor-layouts";
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 const CUSTOMER_ZERO_SLUG = "customer-zero";
-const CUSTOMER_ZERO_DOMAIN = "thirdbridge.com";
+
+// The tenant named by the single-tenant issuer (https://login.microsoftonline.com/<tenant-id>/v2.0).
+// Entra sign-ins are only accepted for an org whose ssoEntraTenantId matches the token's `tid`.
+const ENTRA_TENANT_ID = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.match(/microsoftonline\.com\/([0-9a-f-]{36})\//i)?.[1];
 
 async function main() {
   const org = await db.organization.upsert({
     where: { slug: CUSTOMER_ZERO_SLUG },
-    update: {},
+    update: ENTRA_TENANT_ID ? { ssoEntraTenantId: ENTRA_TENANT_ID } : {},
     create: {
       name: "Customer Zero",
       slug: CUSTOMER_ZERO_SLUG,
       status: "ACTIVE",
-      ssoGoogleDomains: [CUSTOMER_ZERO_DOMAIN],
+      ssoEntraTenantId: ENTRA_TENANT_ID ?? null,
     },
   });
 
@@ -42,8 +45,8 @@ async function main() {
     });
   }
 
-  // Dev fixtures only. Profile fields (names, title, location) mimic what the
-  // HRIS sync will provide; role/permissions are the app-owned part.
+  // Dev fixtures only. Profile fields (names, title, location) mimic what an
+  // Entra sign-in provides; role/permissions are the app-owned part.
   const orgSuperAdmin = await db.user.upsert({
     where: { organizationId_email: { organizationId: org.id, email: "ilhamsaleh.nabijonov@thirdbridge.com" } },
     update: { firstName: "Ilham", lastName: "Nabijonov", title: "Engineering Manager", location: "London" },

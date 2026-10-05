@@ -31,10 +31,10 @@ describe("tenant isolation", () => {
     await db.organization.deleteMany({ where: { slug: { in: ["tenant-test-a", "tenant-test-b"] } } });
 
     orgA = await db.organization.create({
-      data: { name: "Tenant Test A", slug: "tenant-test-a", ssoGoogleDomains: [] },
+      data: { name: "Tenant Test A", slug: "tenant-test-a" },
     });
     orgB = await db.organization.create({
-      data: { name: "Tenant Test B", slug: "tenant-test-b", ssoGoogleDomains: [] },
+      data: { name: "Tenant Test B", slug: "tenant-test-b" },
     });
 
     siteA = await db.site.create({ data: { organizationId: orgA.id, name: "Site A", timeZone: "UTC" } });

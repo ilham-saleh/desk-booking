@@ -42,7 +42,7 @@ describe("booking.endBooking", () => {
   beforeAll(async () => {
     await db.organization.deleteMany({ where: { slug: "end-booking-test" } });
 
-    org = await db.organization.create({ data: { name: "End Booking Test", slug: "end-booking-test", ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "End Booking Test", slug: "end-booking-test" } });
     site = await db.site.create({
       data: { organizationId: org.id, name: "Site", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },
     });

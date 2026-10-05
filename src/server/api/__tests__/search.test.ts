@@ -50,10 +50,10 @@ describe("search", () => {
       where: { slug: { in: ["search-test", "search-test-other"] } },
     });
     org = await db.organization.create({
-      data: { name: "Search Test", slug: "search-test", ssoGoogleDomains: [] },
+      data: { name: "Search Test", slug: "search-test" },
     });
     otherOrg = await db.organization.create({
-      data: { name: "Search Test Other", slug: "search-test-other", ssoGoogleDomains: [] },
+      data: { name: "Search Test Other", slug: "search-test-other" },
     });
 
     openSite = await db.site.create({

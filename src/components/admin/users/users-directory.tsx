@@ -28,19 +28,20 @@ type SortField = "name" | "role" | "email" | "lastLoginAt";
 const ALL_ROLES = "__all__";
 const PAGE_SIZES = [10, 25, 50, 100];
 
+// Brand-scale role chips (navy → teal → light blue → neutral), deliberately not status colours.
 const roleBadgeClass: Record<Role, string> = {
-  [Role.PLATFORM_ADMIN]: "bg-red-100 text-red-900 border-red-200",
-  [Role.ORG_SUPER_ADMIN]: "bg-purple-100 text-purple-900 border-purple-200",
-  [Role.SITE_ADMIN]: "bg-blue-100 text-blue-900 border-blue-200",
-  [Role.BOOKING_MANAGER]: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  [Role.STANDARD_USER]: "bg-gray-100 text-gray-800 border-gray-200",
+  [Role.PLATFORM_ADMIN]: "bg-cyan-ink text-white border-transparent",
+  [Role.ORG_SUPER_ADMIN]: "bg-navy text-white border-transparent",
+  [Role.SITE_ADMIN]: "bg-cyan-soft text-cyan-ink border-cyan/30",
+  [Role.BOOKING_MANAGER]: "bg-[#eaf4ff] text-navy border-light-blue",
+  [Role.STANDARD_USER]: "bg-surface-sunken text-text-secondary border-border",
 };
 
 /**
  * Users → searchable, paginated employee directory with Select Columns
  * (visibility only) and Edit Users mode (bulk removal). All filtering, sorting
  * and paging happen on the server so the page stays light with thousands of
- * HRIS-synced employees.
+ * Entra-provisioned employees.
  */
 export function UsersDirectory() {
   const utils = api.useUtils();

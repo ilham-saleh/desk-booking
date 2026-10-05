@@ -110,18 +110,17 @@ ok(managers.items.length > 0 && managers.items.every((u) => u.role === "BOOKING_
 const small = await admin.query("user.listDirectory", { pageSize: 5, page: 1 });
 ok(small.items.length <= 5 && small.pageCount === Math.ceil(small.total / 5), `pagination: ${small.items.length} rows on page 1 of ${small.pageCount}`);
 
-console.log("\nTEST 5 — edit user: first/last name, email, location persist across a fresh read");
+console.log("\nTEST 5 — profile fields are Entra-owned: Save User changes only the role");
 const riley = byName.items.find((u) => u.email === "standard.one@thirdbridge.com");
 const original = await admin.query("user.get", { userId: riley.id });
 ok((await admin.fetch(`/admin/users/${riley.id}`)).status === 200, "GET /admin/users/[userId] renders (200)");
-await admin.mutate("user.save", { userId: riley.id, firstName: "Rylee", lastName: "Employee-Verify", email: "standard.one+verify@thirdbridge.com", location: "Manchester", role: "STANDARD_USER" });
-let fresh = await admin.query("user.get", { userId: riley.id });
-ok(fresh.firstName === "Rylee" && fresh.lastName === "Employee-Verify" && fresh.name === "Rylee Employee-Verify", "names persisted (display name rebuilt)");
-ok(fresh.email === "standard.one+verify@thirdbridge.com" && fresh.location === "Manchester", "email + location persisted");
-ok(fresh.title === original.title && fresh.department === original.department, "HRIS-owned title/department untouched");
-await admin.mutate("user.save", { userId: riley.id, firstName: original.firstName, lastName: original.lastName, email: original.email, location: original.location, role: original.role });
-fresh = await admin.query("user.get", { userId: riley.id });
-ok(fresh.email === original.email && fresh.name === original.name, "restored original profile");
+// Profile keys are not part of the input schema, so they are dropped rather than written.
+await admin.mutate("user.save", { userId: riley.id, firstName: "Rylee", email: "standard.one+verify@thirdbridge.com", location: "Manchester", role: original.role });
+const fresh = await admin.query("user.get", { userId: riley.id });
+ok(
+  fresh.firstName === original.firstName && fresh.email === original.email && fresh.location === original.location && fresh.title === original.title && fresh.department === original.department,
+  "Entra-owned names / email / location / title / department untouched by Save User",
+);
 
 console.log("\nTEST 8/9/10/11 — Booking Manager permissions end-to-end");
 const sites = await admin.query("facility.list");
@@ -130,8 +129,8 @@ const ny = sites.find((s) => s.name === "New York");
 ok(hq && ny, `two sites available: ${sites.map((s) => s.name).join(", ")}`);
 const morgan = byEmail.items[0];
 // start from a clean slate: Standard User → Booking Manager, no permissions
-await admin.mutate("user.save", { userId: morgan.id, firstName: morgan.firstName, lastName: morgan.lastName, email: morgan.email, location: morgan.location, role: "STANDARD_USER" });
-await admin.mutate("user.save", { userId: morgan.id, firstName: morgan.firstName, lastName: morgan.lastName, email: morgan.email, location: morgan.location, role: "BOOKING_MANAGER" });
+await admin.mutate("user.save", { userId: morgan.id, role: "STANDARD_USER" });
+await admin.mutate("user.save", { userId: morgan.id, role: "BOOKING_MANAGER" });
 let detail = await admin.query("user.get", { userId: morgan.id });
 ok(detail.role === "BOOKING_MANAGER" && detail.permissions.length === 0 && detail.permissionSummary === "No booking permissions", "new Booking Manager has no 'book for others' sites");
 ok(detail.availableSites.length === sites.length, `Available Sites lists all ${sites.length} sites`);
@@ -177,13 +176,13 @@ const nyFloors = await admin.query("floor.listForSite", { siteId: ny.id });
 await expectError(() => samSession.mutate("floor.create", { siteId: ny.id, name: "Sam's NY floor" }), /FORBIDDEN|don't manage/, "Facility Admin cannot manage New York (server denies)");
 ok((await samSession.query("facility.list")).every((s) => s.id === hq.id), "Facility Admin's site list is only HQ");
 ok(Array.isArray(nyFloors), "admin can read New York floors");
-await admin.mutate("user.save", { userId: sam.id, firstName: sam.firstName, lastName: sam.lastName, email: sam.email, location: sam.location, role: "ORG_SUPER_ADMIN" });
+await admin.mutate("user.save", { userId: sam.id, role: "ORG_SUPER_ADMIN" });
 sam = await admin.query("user.get", { userId: sam.id });
 ok(sam.permissionSummary === "All sites and floors" && sam.permissions.length === 0, "System Admin shows 'All sites and floors' with no permission rows");
 const samAsSuper = new Session("sam2");
 await samAsSuper.signIn("site.admin@thirdbridge.com");
 ok((await samAsSuper.query("facility.list")).length === sites.length, "System Admin sees every site");
-await admin.mutate("user.save", { userId: sam.id, firstName: sam.firstName, lastName: sam.lastName, email: sam.email, location: sam.location, role: "SITE_ADMIN" });
+await admin.mutate("user.save", { userId: sam.id, role: "SITE_ADMIN" });
 await admin.mutate("user.addSitePermissions", { userId: sam.id, siteIds: [hq.id] });
 sam = await admin.query("user.get", { userId: sam.id });
 ok(sam.role === "SITE_ADMIN" && sam.permissions.map((p) => p.siteName).join() === "HQ", "restored Sam as Facility Admin of HQ");

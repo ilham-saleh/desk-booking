@@ -253,7 +253,7 @@ try {
   });
   const employeeEligible = deskOf(forEmployee, restrictedDesk.id).eligibleForViewer;
   console.log(
-    `  ℹ ${employee.user.name} on ${restrictedDesk.number}: eligibleForViewer=${employeeEligible} (true only if their HRIS department is Engineering)`,
+    `  ℹ ${employee.user.name} on ${restrictedDesk.number}: eligibleForViewer=${employeeEligible} (true only if their Entra department is Engineering)`,
   );
   await expectError(
     () =>

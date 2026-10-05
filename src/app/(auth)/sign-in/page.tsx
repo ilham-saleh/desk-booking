@@ -4,13 +4,8 @@ import { BrandMark } from "@/components/layout/brand-mark";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { db } from "@/server/db";
 import { devLoginEnabled } from "@/server/auth/config";
-import { entraEnabled, googleEnabled } from "@/server/auth/edge-config";
+import { entraEnabled } from "@/server/auth/edge-config";
 import { signIn } from "@/server/auth";
-
-async function signInWithGoogle() {
-  "use server";
-  await signIn("google", { redirectTo: "/home" });
-}
 
 async function signInWithEntra() {
   "use server";
@@ -29,13 +24,20 @@ const SIGN_OUT_NOTICES: Record<string, string> = {
     "Your previous session belonged to an account that no longer exists or has been deactivated. Please sign in again.",
 };
 
+/** Auth.js error codes it appends when it redirects a failed sign-in here (pages.error). */
+const SIGN_IN_ERRORS: Record<string, string> = {
+  AccessDenied:
+    "We couldn't sign you in with that Microsoft account. Use your company work account. If your access has been removed, contact your workplace admin.",
+};
+const GENERIC_SIGN_IN_ERROR = "Sign-in didn't complete. Please try again.";
+
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reason?: string }>;
+  searchParams: Promise<{ reason?: string; error?: string }>;
 }) {
-  const { reason } = await searchParams;
-  const notice = reason ? SIGN_OUT_NOTICES[reason] : undefined;
+  const { reason, error } = await searchParams;
+  const notice = error ? (SIGN_IN_ERRORS[error] ?? GENERIC_SIGN_IN_ERROR) : reason ? SIGN_OUT_NOTICES[reason] : undefined;
   const devUsers = devLoginEnabled
     ? await db.user.findMany({
         select: { id: true, email: true, name: true, role: true, organization: { select: { name: true } } },
@@ -63,12 +65,10 @@ export default async function SignInPage({
             {notice}
           </p>
         )}
-        {googleEnabled && (
-          <form action={signInWithGoogle}>
-            <Button variant="outline" size="lg" type="submit" className="w-full">
-              Continue with Google
-            </Button>
-          </form>
+        {!entraEnabled && !devLoginEnabled && (
+          <p role="alert" className="text-muted-foreground text-sm">
+            Microsoft sign-in isn&apos;t configured yet. Contact your workplace admin.
+          </p>
         )}
         {entraEnabled && (
           <form action={signInWithEntra}>

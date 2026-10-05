@@ -54,7 +54,7 @@ describe("booking.getFloorAvailability", () => {
   beforeAll(async () => {
     await db.organization.deleteMany({ where: { slug: "get-floor-availability-test" } });
 
-    org = await db.organization.create({ data: { name: "Get Floor Availability Test", slug: "get-floor-availability-test", ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "Get Floor Availability Test", slug: "get-floor-availability-test" } });
     site = await db.site.create({
       data: { organizationId: org.id, name: "Site", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },
     });
