@@ -3,56 +3,97 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Third Bridge application design tokens.
+ *
+ * Brand values were read from the live thirdbridge.com stylesheet
+ * (--brand__color--* custom properties) and computed styles:
+ *   dark-blue #00264C · bright-teal #1DBFC2 · dark-teal #012B30 · light-blue #BBDDFF
+ *   light-teal #C0FFF9 · off-white #FFFBF3 · accent1-bg #F2F5F8 · bg #EDF1F3
+ *   bright-orange #FF8B4A · red #CC0000 · font Inter · CTA radius 25px (pill)
+ * Everything else (hover shades, neutrals for text/borders, success green) is
+ * derived from those so contrast meets WCAG AA on white.
+ *
+ * Shape rule: interactive buttons are pills, fields are 10px, surfaces 16px.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-}
+  /* Brand */
+  --brand-navy: #00264c;
+  --brand-navy-hover: #0b3560;
+  --brand-navy-soft: #e6ecf3;
+  --brand-cyan: #1dbfc2;
+  --brand-cyan-hover: #17aaad;
+  --brand-cyan-ink: #012b30;
+  --brand-cyan-soft: #e3f7f7;
+  --brand-light-blue: #bbddff;
+  --brand-off-white: #fffbf3;
+  --brand-orange: #ff8b4a;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  /* Surfaces */
+  --brand-background: #f2f5f8;
+  --surface: #ffffff;
+  --surface-muted: #f6f8fa;
+  --surface-sunken: #edf1f3;
+  --border-subtle: #e3e8ee;
+  --border-strong: #cfd7e0;
+  /* Between subtle and strong — outlines white controls sitting on white. */
+  --border-control: #dbe2e9;
+
+  /* Text */
+  --text-primary: #0d2137;
+  --text-secondary: #43546a;
+  --text-muted: #5f6f82;
+
+  /* Status */
+  --success: #148a55;
+  --success-soft: #e7f6ee;
+  --warning: #a8540d;
+  --warning-soft: #fff3e8;
+  --danger: #c4231c;
+  --danger-soft: #fdecea;
+
+  /* Elevation — tinted navy, never pure black */
+  --shadow-xs: 0 1px 2px rgb(0 38 76 / 0.06);
+  --shadow-sm: 0 1px 3px rgb(0 38 76 / 0.08), 0 1px 2px rgb(0 38 76 / 0.04);
+  --shadow-md: 0 6px 16px -4px rgb(0 38 76 / 0.12), 0 2px 4px rgb(0 38 76 / 0.04);
+  --shadow-lg: 0 18px 40px -12px rgb(0 38 76 / 0.22), 0 4px 10px rgb(0 38 76 / 0.06);
+  /* Soft lift for controls and floating chrome on white map workspaces. */
+  --shadow-float: 0 1px 2px rgb(0 38 76 / 0.05), 0 4px 12px -4px rgb(0 38 76 / 0.1);
+  --shadow-float-hover: 0 1px 2px rgb(0 38 76 / 0.06), 0 6px 16px -4px rgb(0 38 76 / 0.14);
+
+  --radius: 0.625rem;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* shadcn semantic aliases, mapped onto the brand tokens above */
+  --background: var(--brand-background);
+  --foreground: var(--text-primary);
+  --card: var(--surface);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--brand-navy);
+  --primary-foreground: #ffffff;
+  --secondary: var(--brand-navy-soft);
+  --secondary-foreground: var(--brand-navy);
+  --muted: var(--surface-muted);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--brand-navy-soft);
+  --accent-foreground: var(--brand-navy);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --border: var(--border-subtle);
+  --input: var(--border-strong);
+  --ring: var(--brand-cyan);
 }
 
 @theme inline {
+  --font-sans: var(--font-inter), "Inter", Arial, sans-serif;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: 1rem;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -73,13 +114,172 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --color-navy: var(--brand-navy);
+  --color-navy-hover: var(--brand-navy-hover);
+  --color-navy-soft: var(--brand-navy-soft);
+  --color-cyan: var(--brand-cyan);
+  --color-cyan-hover: var(--brand-cyan-hover);
+  --color-cyan-ink: var(--brand-cyan-ink);
+  --color-cyan-soft: var(--brand-cyan-soft);
+  --color-light-blue: var(--brand-light-blue);
+  --color-off-white: var(--brand-off-white);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-border-strong: var(--border-strong);
+  --color-border-control: var(--border-control);
+  --color-text-secondary: var(--text-secondary);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-float: var(--shadow-float);
+  --ease-out: var(--ease-out);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans text-sm;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    background: var(--brand-light-blue);
+    color: var(--brand-navy);
+  }
+}
+
+/* Type scale — one set of styles for every screen. */
+@utility type-page-title {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--brand-navy);
+}
+@utility type-section-title {
+  font-size: 1rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+@utility type-card-title {
+  font-size: 0.9375rem;
+  line-height: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--text-primary);
+}
+@utility type-body {
+  font-size: 0.875rem;
+  line-height: 1.375rem;
+  color: var(--text-primary);
+}
+@utility type-label {
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+@utility type-helper {
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  color: var(--text-muted);
+}
+@utility type-overline {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+@utility type-caption {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--text-muted);
+}
+
+/* Thin, quiet scrollbars inside panels. */
+@utility scroll-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+@utility skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-sunken) 0%,
+    var(--surface-muted) 50%,
+    var(--surface-sunken) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+@utility progress-indeterminate {
+  animation: progress-slide 1.1s var(--ease-out) infinite;
+}
+
+/*
+ * Elevated fields for toolbars on a white workspace (Floor Map). Unlayered so it
+ * outranks the fields' own utility classes; it sets --tw-shadow rather than
+ * box-shadow so Tailwind's focus ring still composes on top.
+ */
+.toolbar-elevated :is([data-slot="select-trigger"], [data-slot="input"]) {
+  border-color: var(--border-control);
+  --tw-shadow: var(--shadow-float);
+}
+.toolbar-elevated :is([data-slot="select-trigger"], [data-slot="input"]):hover:not(:disabled) {
+  border-color: var(--border-strong);
+  --tw-shadow: var(--shadow-float-hover);
+}
+.toolbar-elevated
+  :is([data-slot="select-trigger"], [data-slot="input"]):is(:focus-visible, [data-state="open"]) {
+  border-color: var(--brand-cyan);
+  --tw-shadow: var(--shadow-float-hover);
+}
+.toolbar-elevated :is([data-slot="select-trigger"], [data-slot="input"]):disabled {
+  --tw-shadow: 0 0 #0000;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

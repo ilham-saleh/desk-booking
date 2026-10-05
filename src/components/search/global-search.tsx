@@ -123,7 +123,7 @@ export function GlobalSearch({
             showList && items[activeIndex] ? `${listId}-${activeIndex}` : undefined
           }
           autoComplete="off"
-          className={cn("pl-9", inputClassName)}
+          className={cn("bg-surface-muted focus-visible:bg-surface h-9 rounded-full border-transparent pl-9 shadow-none hover:border-border-strong", inputClassName)}
           placeholder={placeholder}
           value={query}
           onChange={(e) => {
@@ -151,8 +151,8 @@ export function GlobalSearch({
       </div>
 
       {showList && (
-        <div className="bg-popover text-popover-foreground absolute top-full left-0 z-30 mt-1 w-full min-w-72 overflow-hidden rounded-md border shadow-md">
-          <ul id={listId} role="listbox" className="max-h-80 overflow-y-auto p-1 text-sm">
+        <div className="bg-popover text-popover-foreground animate-in fade-in-0 slide-in-from-top-1 absolute top-full left-0 z-40 mt-1.5 w-full min-w-80 overflow-hidden rounded-xl border shadow-lg duration-150">
+          <ul id={listId} role="listbox" className="scroll-quiet max-h-96 overflow-y-auto p-1.5 text-sm">
             {items.length === 0 && (
               <li className="text-muted-foreground px-3 py-4 text-center">
                 {results.isFetching ? "Searching…" : `No desk or person matches “${debounced}”`}
@@ -212,7 +212,7 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
   return (
     <li
       role="presentation"
-      className="text-muted-foreground px-2 pt-2 pb-1 text-xs font-medium tracking-wide uppercase"
+      className="type-overline px-2.5 pt-2 pb-1"
     >
       {children}
     </li>
@@ -237,8 +237,8 @@ function ResultRow({
       <button
         type="button"
         className={cn(
-          "hover:bg-accent flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-none",
-          active && "bg-accent",
+          "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none transition-colors duration-100",
+          active && "bg-navy-soft text-navy",
         )}
         onMouseEnter={onHover}
         onClick={onPick}

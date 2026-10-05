@@ -21,7 +21,6 @@ function parseInitialState(params: SearchParams): FloorMapInitialState {
     personId: id(first(params.person)),
     date: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined,
     startMinutes: slot(first(params.start)),
-    endMinutes: slot(first(params.end)),
   };
 }
 

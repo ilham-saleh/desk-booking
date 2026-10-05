@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AlertTriangle, CheckCircle2, Info, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Role } from "@/generated/prisma/enums";
@@ -26,10 +27,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Skeleton, Spinner } from "@/components/ui/loading";
+import { DetailRow, SidePanel, SidePanelBody, SidePanelHeader, SidePanelSection } from "@/components/ui/side-panel";
+import { formatDisplayDate } from "@/lib/dates";
+import { DateStepper, TimeRangeFields } from "@/components/booking/booking-fields";
 import { BookingSubjectFields, type BookingSubjectMode, type BookingSubjectUser } from "@/components/booking/subject-fields";
 import { Swatch } from "@/components/ui/combobox";
 
@@ -131,140 +133,167 @@ export function DeskPanel({
   const details = api.desk.get.useQuery({ deskId: desk.id }, { enabled: open });
   const assignments = details.data?.restrictionAssignments ?? [];
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
-        <SheetHeader className="border-b">
-          <SheetTitle>Desk {desk.number}</SheetTitle>
-          <SheetDescription>
-            {details.data?.spaceType ?? "Desk"}
-            {desk.name && ` · ${desk.name}`}
-            {desk.requiresCheckIn ? " · Check-in required" : " · No check-in required"}
-            {!desk.isActive && " · Inactive"}
-          </SheetDescription>
-          {details.data?.description && <p className="text-sm">{details.data.description}</p>}
-        </SheetHeader>
+  if (!open) return null;
 
-        <div className="flex flex-col gap-5 p-4">
-          {!desk.isActive ? (
-            <p role="status" className="text-muted-foreground rounded-md border bg-muted/40 p-3 text-sm">
+  const isBooked = blockingBookings.length > 0;
+  const features = details.data?.attributes ?? [];
+
+  return (
+    <SidePanel dockAt="xl" aria-label={`Desk ${desk.number} details`}>
+      <SidePanelHeader
+        title={`Desk ${desk.number}`}
+        subtitle={`${floorName} · ${site.name}`}
+        onClose={() => onOpenChange(false)}
+        status={
+          <>
+            {!desk.isActive ? (
+              <Badge variant="muted" dot>
+                Inactive
+              </Badge>
+            ) : isBooked ? (
+              <Badge variant="default" dot>
+                Booked
+              </Badge>
+            ) : (
+              <Badge variant="success" dot>
+                Available
+              </Badge>
+            )}
+            {details.data?.spaceType && <Badge variant="outline">{details.data.spaceType}</Badge>}
+            {desk.requiresCheckIn && <Badge variant="brand">Check-in required</Badge>}
+          </>
+        }
+      >
+        {(desk.name || details.data?.description) && (
+          <div className="mt-3 space-y-1">
+            {desk.name && <p className="text-foreground text-sm font-medium">{desk.name}</p>}
+            {details.data?.description && <p className="text-muted-foreground text-[0.8125rem] leading-5">{details.data.description}</p>}
+          </div>
+        )}
+      </SidePanelHeader>
+
+      <SidePanelBody>
+        {!desk.isActive ? (
+          <SidePanelSection>
+            <p role="status" className="bg-surface-muted text-text-secondary rounded-xl p-3 text-sm">
               This desk is inactive and can&apos;t be booked.
             </p>
-          ) : (
-            <>
-              {blockingBookings.map((booking) => (
-                <BookingCard key={booking.id} booking={booking} site={site} desk={desk} now={now} onSettled={onMutationSettled} />
-              ))}
-
-              <section className="space-y-3" aria-labelledby="desk-book-heading">
-                <h3 id="desk-book-heading" className="font-medium">
-                  {blockingBookings.length > 0 ? "Book this desk for another time" : "Book this desk"}
-                </h3>
-                <BookingForm
-                  desk={desk}
-                  site={site}
-                  viewedDate={viewedDate}
-                  viewedWindow={viewedWindow}
-                  bookings={bookings}
-                  currentUserRole={currentUserRole}
-                  onBooked={onMutationSettled}
-                />
-              </section>
-            </>
-          )}
-
-          {/* Restricted to — from the desk's restriction blocks in the database */}
-          <section className="space-y-2 border-t pt-4 text-sm" aria-labelledby="desk-restricted-heading">
-            <h3 id="desk-restricted-heading" className="font-medium">
-              Restricted to
-            </h3>
-            {details.isPending ? (
-              <p className="text-muted-foreground">Loading restrictions…</p>
-            ) : assignments.length === 0 ? (
-              <div className="flex items-start gap-3">
-                <Avatar className="size-9">
-                  <AvatarFallback className="text-xs">All</AvatarFallback>
-                </Avatar>
-                <div>
-                  <p>Anyone can book</p>
-                  <p className="text-muted-foreground text-xs">No day-specific restrictions on this desk</p>
-                </div>
-              </div>
-            ) : (
-              <ul className="space-y-3">
-                {assignments.map((assignment) => {
-                  const audience = describeAssignmentAudience(assignment);
-                  const color = assignment.restrictionMode === "CUSTOM" ? assignment.restriction?.color : null;
-                  return (
-                    <li key={assignment.id} className="flex items-start gap-3">
-                      <Avatar className="size-9">
-                        <AvatarFallback className="text-xs">{audience.charAt(0).toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="flex items-center gap-1.5">
-                          {color && <Swatch color={color} />}
-                          <span>{audience}</span>
-                        </p>
-                        <p className="text-muted-foreground text-xs">
-                          Shift ({assignment.shift.name}: {formatDays(assignment.shift.daysOfWeek)})
-                          {assignment.advanceBookingWindowDays ? ` · up to ${assignment.advanceBookingWindowDays} days ahead` : ""}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+          </SidePanelSection>
+        ) : (
+          <>
+            {isBooked && (
+              <SidePanelSection title="Occupied for this time">
+                {blockingBookings.map((booking) => (
+                  <BookingCard key={booking.id} booking={booking} site={site} desk={desk} now={now} onSettled={onMutationSettled} />
+                ))}
+              </SidePanelSection>
             )}
-          </section>
 
-          <section className="space-y-2 border-t pt-4 text-sm" aria-labelledby="desk-day-heading">
-            <h3 id="desk-day-heading" className="font-medium">
-              Bookings on {viewedDate}
-            </h3>
-            {bookings.length === 0 && <p className="text-muted-foreground">No bookings on this date</p>}
-            {bookings.map((booking) => (
-              <BookingRow key={booking.id} booking={booking} site={site} desk={desk} now={now} onSettled={onMutationSettled} />
-            ))}
-          </section>
+            <SidePanelSection title={isBooked ? "Book another time" : "Booking"}>
+              <BookingForm
+                desk={desk}
+                site={site}
+                viewedDate={viewedDate}
+                viewedWindow={viewedWindow}
+                bookings={bookings}
+                currentUserRole={currentUserRole}
+                onBooked={onMutationSettled}
+              />
+            </SidePanelSection>
+          </>
+        )}
 
-          {details.data && details.data.attributes.length > 0 && (
-            <section className="space-y-1.5 border-t pt-4 text-sm" aria-labelledby="desk-features-heading">
-              <h3 id="desk-features-heading" className="font-medium">
-                Features
-              </h3>
-              <div className="flex flex-wrap gap-1.5">
-                {details.data.attributes.map((a) => (
-                  <Badge key={a.id} variant="secondary">
+        {/* Restricted to — from the desk's restriction blocks in the database */}
+        <SidePanelSection title="Restricted to">
+          {details.isPending ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-4/5" />
+            </div>
+          ) : assignments.length === 0 ? (
+            <AudienceRow initial="All" title="Anyone can book" detail="No day-specific restrictions on this desk" />
+          ) : (
+            <ul className="space-y-3">
+              {assignments.map((assignment) => {
+                const audience = describeAssignmentAudience(assignment);
+                const color = assignment.restrictionMode === "CUSTOM" ? assignment.restriction?.color : null;
+                return (
+                  <li key={assignment.id}>
+                    <AudienceRow
+                      initial={audience.charAt(0).toUpperCase()}
+                      color={color}
+                      title={audience}
+                      detail={`${assignment.shift.name} · ${formatDays(assignment.shift.daysOfWeek)}${
+                        assignment.advanceBookingWindowDays ? ` · up to ${assignment.advanceBookingWindowDays} days ahead` : ""
+                      }`}
+                    />
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </SidePanelSection>
+
+        <SidePanelSection title={`Bookings · ${formatDisplayDate(viewedDate)}`}>
+          {bookings.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No bookings on this date</p>
+          ) : (
+            <ul className="space-y-1">
+              {bookings.map((booking) => (
+                <BookingRow key={booking.id} booking={booking} site={site} desk={desk} now={now} onSettled={onMutationSettled} />
+              ))}
+            </ul>
+          )}
+        </SidePanelSection>
+
+        {features.length > 0 && (
+          <SidePanelSection title="Desk features">
+            <ul className="flex flex-wrap gap-1.5">
+              {features.map((a) => (
+                <li key={a.id}>
+                  <Badge variant="secondary" className="px-3 py-1">
                     {a.type.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}
                   </Badge>
-                ))}
-              </div>
-            </section>
-          )}
+                </li>
+              ))}
+            </ul>
+          </SidePanelSection>
+        )}
+      </SidePanelBody>
+    </SidePanel>
+  );
+}
 
-          <section className="space-y-1 border-t pt-4 text-sm" aria-labelledby="desk-location-heading">
-            <h3 id="desk-location-heading" className="font-medium">
-              Location
-            </h3>
-            <p>{desk.number}</p>
-            <p className="text-muted-foreground">{floorName}</p>
-            <p className="text-muted-foreground">{site.name}</p>
-          </section>
-        </div>
-      </SheetContent>
-    </Sheet>
+function AudienceRow({ initial, title, detail, color }: { initial: string; title: string; detail: string; color?: string | null }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar className="size-9 rounded-xl">
+        <AvatarFallback className="rounded-xl text-xs">{initial}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 pt-0.5">
+        <p className="text-foreground flex items-center gap-1.5 text-sm font-medium">
+          {color && <Swatch color={color} />}
+          <span className="truncate">{title}</span>
+        </p>
+        <p className="text-muted-foreground text-xs leading-5">{detail}</p>
+      </div>
+    </div>
   );
 }
 
 export function StatusBadge({ status, className }: { status: DeskPanelBooking["status"]; className?: string }) {
-  if (status === "CHECKED_IN") {
-    return (
-      <Badge className={`border-transparent bg-green-600 text-white ${className ?? ""}`}>Checked in</Badge>
-    );
-  }
+  const labels: Record<DeskPanelBooking["status"], string> = {
+    CONFIRMED: "Confirmed",
+    CHECKED_IN: "Checked in",
+    CANCELLED: "Cancelled",
+    AUTO_CANCELLED: "Auto-cancelled",
+    COMPLETED: "Completed",
+  };
+  const variant =
+    status === "CHECKED_IN" ? "success" : status === "CONFIRMED" ? "brand" : status === "COMPLETED" ? "muted" : "destructive";
   return (
-    <Badge variant="secondary" className={className}>
-      {status === "CONFIRMED" ? "Confirmed" : status}
+    <Badge variant={variant} dot className={className}>
+      {labels[status] ?? status}
     </Badge>
   );
 }
@@ -380,36 +409,40 @@ function BookingCard({
   const occupant = booking.occupant;
 
   return (
-    <div className="flex flex-col items-center gap-3 rounded-lg border py-6 text-center" role="group" aria-label="Current booking">
-      <Avatar className="size-14">
-        <AvatarFallback className="text-lg font-medium">{booking.occupantLabel.charAt(0).toUpperCase()}</AvatarFallback>
-      </Avatar>
-      <div className="px-4">
-        <p className="font-medium">
-          {booking.occupantLabel}
-          {booking.isOwn && <span className="text-muted-foreground font-normal"> (you)</span>}
-        </p>
-        {occupant && (occupant.title || occupant.department) && (
-          <p className="text-muted-foreground text-xs">{[occupant.title, occupant.department].filter(Boolean).join(" · ")}</p>
-        )}
-        {occupant?.email && <p className="text-muted-foreground text-xs">{occupant.email}</p>}
-        {occupant?.isGuest && <p className="text-muted-foreground text-xs">Guest</p>}
-        {booking.bookedByLabel && <p className="text-muted-foreground text-xs">Booked by {booking.bookedByLabel}</p>}
-        <div className="mt-1.5">
-          <StatusBadge status={booking.status} />
+    <div className="bg-surface-muted space-y-3 rounded-2xl border p-4" role="group" aria-label="Current booking">
+      <div className="flex items-start gap-3">
+        <Avatar className="size-11">
+          <AvatarFallback className="bg-navy text-sm text-white">{booking.occupantLabel.charAt(0).toUpperCase()}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <p className="text-foreground truncate font-semibold">
+            {booking.occupantLabel}
+            {booking.isOwn && <span className="text-muted-foreground font-normal"> (you)</span>}
+          </p>
+          {occupant && (occupant.title || occupant.department) && (
+            <p className="text-muted-foreground truncate text-xs">{[occupant.title, occupant.department].filter(Boolean).join(" · ")}</p>
+          )}
+          {occupant?.email && <p className="text-muted-foreground truncate text-xs">{occupant.email}</p>}
+          {occupant?.isGuest && <p className="text-muted-foreground text-xs">Guest</p>}
         </div>
+        <StatusBadge status={booking.status} />
       </div>
-      <p className="text-sm">
-        {inProgress ? "Booked until" : "Booked"} {formatTime(booking.startAt, site.timeZone)}–{formatTime(booking.endAt, site.timeZone)}
-      </p>
+      <div className="bg-surface flex items-center justify-between rounded-xl border px-3 py-2 text-sm">
+        <span className="text-muted-foreground">{inProgress ? "Booked until" : "Booked"}</span>
+        <span className="text-foreground font-semibold tabular-nums">
+          {formatTime(booking.startAt, site.timeZone)}–{formatTime(booking.endAt, site.timeZone)}
+        </span>
+      </div>
+      {booking.bookedByLabel && <p className="text-muted-foreground text-xs">Booked by {booking.bookedByLabel}</p>}
 
       {actions.available.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap gap-2">
           {actions.available.map((action) => (
             <Button
               key={action}
-              className="w-48"
-              variant={action === "checkIn" ? "default" : action === "end" ? "destructive" : "outline"}
+              size="sm"
+              className="flex-1"
+              variant={action === "checkIn" ? "brand" : action === "end" ? "destructive" : "outline"}
               onClick={() => actions.run(action)}
               disabled={actions.pending}
             >
@@ -439,23 +472,28 @@ function BookingRow({
 }) {
   const actions = useBookingActions(booking, desk, site.timeZone, now, onSettled);
   return (
-    <div className="flex items-center justify-between gap-2">
-      <p className="text-muted-foreground min-w-0">
-        {formatTime(booking.startAt, site.timeZone)}–{formatTime(booking.endAt, site.timeZone)} — {booking.occupantLabel}
-        {booking.isOwn && " (you)"}
-        <StatusBadge status={booking.status} className="ml-2" />
-      </p>
-      <div className="flex shrink-0 gap-1">
+    <li className="hover:bg-surface-muted -mx-2 flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 transition-colors">
+      <div className="min-w-0">
+        <p className="text-foreground text-sm font-medium tabular-nums">
+          {formatTime(booking.startAt, site.timeZone)}–{formatTime(booking.endAt, site.timeZone)}
+        </p>
+        <p className="text-muted-foreground truncate text-xs">
+          {booking.occupantLabel}
+          {booking.isOwn && " (you)"}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <StatusBadge status={booking.status} />
         {actions.available
           .filter((action) => action !== "checkIn")
           .map((action) => (
-            <Button key={action} size="sm" variant="ghost" disabled={actions.pending} onClick={() => actions.run(action)}>
+            <Button key={action} size="sm" variant="ghost" className="h-7 px-2.5" disabled={actions.pending} onClick={() => actions.run(action)}>
               {action === "end" ? "End" : "Cancel"}
             </Button>
           ))}
       </div>
       {actions.dialog}
-    </div>
+    </li>
   );
 }
 
@@ -531,61 +569,14 @@ function BookingForm({
     });
   }
 
+  const occupantName =
+    subjectMode === "guest" ? guestName.trim() || "Guest" : subjectMode === "user" ? (forUser?.name ?? "Another employee") : "You";
+  const weekday = validDate ? WEEKDAY_LONG[dayOfWeekForDate(date)] : "";
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor="desk-panel-date">Date</Label>
-          <Input
-            id="desk-panel-date"
-            type="date"
-            min={todayInTimeZone(site.timeZone)}
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="desk-panel-start">Start</Label>
-            <Select
-              value={String(startMinutes)}
-              onValueChange={(v) => {
-                const next = Number(v);
-                setStartMinutes(next);
-                if (endMinutes <= next) setEndMinutes(Math.min(next + SLOT_MINUTES, site.operatingHoursEnd));
-              }}
-            >
-              <SelectTrigger id="desk-panel-start">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {timeOptions.slice(0, -1).map((minutes) => (
-                  <SelectItem key={minutes} value={String(minutes)}>
-                    {formatMinutesLabel(minutes)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="desk-panel-end">End</Label>
-            <Select value={String(endMinutes)} onValueChange={(v) => setEndMinutes(Number(v))}>
-              <SelectTrigger id="desk-panel-end">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {endOptions.map((minutes) => (
-                  <SelectItem key={minutes} value={String(minutes)}>
-                    {formatMinutesLabel(minutes)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {isAdmin && (
+      <div className="grid gap-3.5">
+        {isAdmin ? (
           <BookingSubjectFields
             mode={subjectMode}
             onModeChange={setSubjectMode}
@@ -594,13 +585,32 @@ function BookingForm({
             guestName={guestName}
             onGuestNameChange={setGuestName}
           />
+        ) : (
+          <DetailRow label="Occupant">You</DetailRow>
         )}
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="desk-panel-date">Date</Label>
+          <DateStepper id="desk-panel-date" min={todayInTimeZone(site.timeZone)} value={date} onChange={setDate} />
+        </div>
+
+        <TimeRangeFields
+          idPrefix="desk-panel"
+          startOptions={timeOptions.slice(0, -1)}
+          endOptions={endOptions}
+          start={startMinutes}
+          end={endMinutes}
+          onStartChange={(next) => {
+            setStartMinutes(next);
+            if (endMinutes <= next) setEndMinutes(Math.min(next + SLOT_MINUTES, site.operatingHoursEnd));
+          }}
+          onEndChange={setEndMinutes}
+        />
       </div>
 
       {conflicts.length > 0 && (
-        <div role="status" className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-          <p className="font-medium">Desk {desk.number} is already booked during this time.</p>
-          <ul className="mt-1">
+        <Notice tone="warning" title={`Desk ${desk.number} is already booked during this time.`}>
+          <ul className="mt-1 space-y-0.5 tabular-nums">
             {conflicts.map((b) => (
               <li key={b.id}>
                 {formatTime(b.startAt, site.timeZone)}–{formatTime(b.endAt, site.timeZone)} — {b.occupantLabel}
@@ -608,61 +618,99 @@ function BookingForm({
             ))}
           </ul>
           <p className="mt-1">Pick a start or end time outside these hours.</p>
-        </div>
+        </Notice>
       )}
 
       {blocked && eligibility.data && (
-        <div role="status" className="rounded-md border border-violet-200 bg-violet-50 p-3 text-sm text-violet-950">
-          <p className="font-medium">
-            {subjectMode === "user"
+        <Notice
+          tone="restricted"
+          title={`${
+            subjectMode === "user"
               ? `${forUser?.name ?? "This person"} can't book this desk`
               : subjectMode === "guest"
                 ? "This desk can't be booked for a guest"
-                : "You can't book this desk"}{" "}
-            on {WEEKDAY_LONG[dayOfWeekForDate(date)]}.
-          </p>
+                : "You can't book this desk"
+          } on ${weekday}.`}
+        >
           <p className="mt-1">{eligibility.data.reason}</p>
-        </div>
+        </Notice>
       )}
       {!blocked && conflicts.length === 0 && eligibility.data?.eligible && (
-        <p className="text-muted-foreground text-xs" role="status">
+        <p className="text-success flex items-center gap-1.5 text-xs font-medium" role="status">
+          <CheckCircle2 className="size-3.5" />
           {subjectMode === "user" ? `${forUser?.name ?? "They"} can book` : subjectMode === "guest" ? "A guest can book" : "You're eligible to book"} this
-          desk on {WEEKDAY_LONG[dayOfWeekForDate(date)]}.
+          desk on {weekday}.
         </p>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Button
-          disabled={
-            (subjectMode === "user" && !forUser) || (subjectMode === "guest" && !guestName.trim()) || blocked || !validDate || conflicts.length > 0
-          }
-          onClick={() => setConfirmOpen(true)}
-        >
-          Book desk {desk.number}
-        </Button>
-      </div>
+      <Button
+        variant="brand"
+        size="lg"
+        className="w-full"
+        disabled={
+          (subjectMode === "user" && !forUser) || (subjectMode === "guest" && !guestName.trim()) || blocked || !validDate || conflicts.length > 0
+        }
+        onClick={() => setConfirmOpen(true)}
+      >
+        Book desk {desk.number}
+      </Button>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Confirm booking</DialogTitle>
-            <DialogDescription>
-              Desk {desk.number} on {date}, {formatMinutesLabel(startMinutes)}–{formatMinutesLabel(endMinutes)}
-              {subjectMode === "guest" && guestName && ` for guest ${guestName}`}
-              {subjectMode === "user" && forUser && ` for ${forUser.name}`}
-              .
-            </DialogDescription>
+            <DialogDescription>Check the details below, then confirm.</DialogDescription>
           </DialogHeader>
+          <dl className="bg-surface-muted space-y-2.5 rounded-xl border p-4">
+            <DetailRow label="Desk">
+              {desk.number} · {site.name}
+            </DetailRow>
+            <DetailRow label="Occupant">{subjectMode === "guest" ? `${occupantName} (guest)` : occupantName}</DetailRow>
+            <DetailRow label="Date">{validDate ? formatDisplayDate(date, { year: true }) : date}</DetailRow>
+            <DetailRow label="Time">
+              <span className="tabular-nums">
+                {formatMinutesLabel(startMinutes)}–{formatMinutesLabel(endMinutes)}
+              </span>
+            </DetailRow>
+          </dl>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={createBooking.isPending}>
-              {createBooking.isPending ? "Booking…" : "Confirm"}
+            <Button variant="brand" onClick={submit} disabled={createBooking.isPending}>
+              {createBooking.isPending && <Spinner />}
+              {createBooking.isPending ? "Booking…" : "Confirm booking"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/** Inline, contextual message inside a panel. Tone is echoed by an icon and title text, not colour alone. */
+export function Notice({
+  tone,
+  title,
+  children,
+}: {
+  tone: "warning" | "restricted" | "info";
+  title: string;
+  children?: React.ReactNode;
+}) {
+  const styles = {
+    warning: "border-[#f5d2b3] bg-warning-soft text-[#6b3608]",
+    restricted: "border-[#f5d2b3] bg-[#fff7f1] text-[#6b3608]",
+    info: "border-light-blue bg-navy-soft text-navy",
+  }[tone];
+  const Icon = tone === "restricted" ? Lock : tone === "warning" ? AlertTriangle : Info;
+  return (
+    <div role="status" className={`flex gap-2.5 rounded-xl border p-3 text-[0.8125rem] leading-5 ${styles}`}>
+      <Icon className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0">
+        <p className="font-semibold">{title}</p>
+        {children}
+      </div>
     </div>
   );
 }

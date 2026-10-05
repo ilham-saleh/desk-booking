@@ -243,7 +243,7 @@ export function NeighbourhoodEditorDialogV2({
                   <button
                     key={c}
                     onClick={() => setColor(c)}
-                    className={`h-8 w-8 rounded border-2 transition-all ${color === c ? "border-gray-900 ring-2 ring-offset-2" : "border-gray-300 hover:border-gray-400"}`}
+                    className={`h-8 w-8 rounded border-2 transition-all ${color === c ? "border-navy ring-2 ring-offset-2" : "border-border-strong hover:border-border-strong"}`}
                     style={{ backgroundColor: c }}
                     title={c}
                   />
@@ -279,8 +279,8 @@ export function NeighbourhoodEditorDialogV2({
               {selectedDeskIds.size} desk(s) selected
             </div>
             {preSelectedDeskIds.length > 0 && !neighbourhood ? (
-              <div className="rounded border border-green-200 bg-green-50 p-4">
-                <p className="mb-3 text-sm font-medium text-green-900">Pre-selected Desks</p>
+              <div className="rounded border border-success/25 bg-success-soft p-4">
+                <p className="mb-3 text-sm font-medium text-success">Pre-selected Desks</p>
                 <div className="flex flex-wrap gap-2">
                   {Array.from(selectedDeskIds)
                     .map((id) => desks.find((d) => d.id === id))
@@ -358,8 +358,8 @@ export function NeighbourhoodEditorDialogV2({
 
             <div className="space-y-2">
               <Label className="text-sm font-medium">Important Notes</Label>
-              <div className="rounded border border-amber-200 bg-amber-50 p-3">
-                <p className="text-xs text-amber-900">
+              <div className="rounded border border-[#f5d2b3] bg-warning-soft p-3">
+                <p className="text-xs text-[#6b3608]">
                   ℹ️ Neighbourhood membership determines who can see the neighbourhood, but desk access is still controlled by desk-level restrictions.
                   Members can only book desks if they also meet the desk's booking restrictions.
                 </p>

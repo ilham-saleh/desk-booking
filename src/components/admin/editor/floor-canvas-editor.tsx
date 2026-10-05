@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text } from "react-konva";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Circle, Group, Image as KonvaImage, Label as KonvaLabel, Layer, Rect, Stage, Tag, Text } from "react-konva";
 import type Konva from "konva";
 import useImage from "use-image";
 import { toast } from "sonner";
+import { Crosshair, Trash2 } from "lucide-react";
 
 import { api } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
@@ -13,13 +14,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { EditorAction, EditorMode, EditorObjectType } from "@/components/admin/editor/editor-layout";
+import { MARKER, useMarkerSprites, type MarkerSprites } from "@/components/floor-map/desk-markers";
+import { MapControls, MapLegend, MapLoadingOverlay } from "@/components/floor-map/map-chrome";
+import { COUNTER_SCALE, LABEL_NAME, useMapViewport, type MapViewportControls } from "@/components/floor-map/map-viewport";
+import { MAP_BACKGROUND } from "@/components/floor-map/floor-canvas";
 
 /**
  * Admin floor-plan canvas. Every object position is stored in FLOOR-PLAN IMAGE
  * PIXELS (the same coordinate system the employee Floor Map renders), never
- * in viewport pixels: the stage is scaled to the container so a resize, a
+ * in viewport pixels: pan/zoom live on the stage transform, so a resize, a
  * zoom or a refresh never moves a desk. Pointer positions are converted with
- * Konva's relative pointer position, which accounts for scale + pan.
+ * Konva's relative pointer position, which accounts for scale + pan. Markers
+ * and labels are counter-scaled to a constant on-screen size.
  */
 
 export interface EditorDesk {
@@ -49,10 +55,12 @@ interface FloorCanvasEditorProps {
   onRequestDeleteDesk: (deskId: string) => void;
   onCancelAction: () => void;
   placingDesk: boolean;
+  /** Floating content in the canvas's top-right corner (e.g. the neighbourhood desk picker). */
+  overlay?: React.ReactNode;
 }
 
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 6;
+const RESTRICTION_BADGE = "#d9692a";
+const FONT = "Inter, Arial, sans-serif";
 
 export function FloorCanvasEditor({
   floorId,
@@ -70,15 +78,15 @@ export function FloorCanvasEditor({
   onRequestDeleteDesk,
   onCancelAction,
   placingDesk,
+  overlay,
 }: FloorCanvasEditorProps) {
   const utils = api.useUtils();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const stageRef = useRef<Konva.Stage>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null);
-  const [image] = useImage(backgroundImageUrl ?? "");
+  const { containerRef, stageRef, size, stageHandlers, controls } = useMapViewport({ contentWidth: imageWidth, contentHeight: imageHeight });
+  const { refresh } = controls;
+  const [image, imageStatus] = useImage(backgroundImageUrl ?? "");
+  const { sprites, iconSource } = useMarkerSprites();
+  const ghostRef = useRef<Konva.Group>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   const [selectedUtilityId, setSelectedUtilityId] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
@@ -99,16 +107,6 @@ export function FloorCanvasEditor({
   const placing = placingDesk || placingUtility || placingRoom;
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setContainerWidth(entry.contentRect.width);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     if (!placing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancelAction();
@@ -116,13 +114,6 @@ export function FloorCanvasEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [placing, onCancelAction]);
-
-  const baseScale = containerWidth > 0 ? containerWidth / imageWidth : 1;
-  const scale = baseScale * zoom;
-  const stageWidth = containerWidth || imageWidth;
-  const stageHeight = Math.round(imageHeight * baseScale);
-  const markerRadius = 13 / scale;
-  const fontSize = 11 / scale;
 
   const clamp = useCallback(
     (x: number, y: number) => ({
@@ -258,129 +249,66 @@ export function FloorCanvasEditor({
     moveDesk.mutate({ deskId: desk.id, x: next.x, y: next.y });
   };
 
-  const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>) => {
-    e.evt.preventDefault();
-    const stage = stageRef.current;
-    if (!stage) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
-    const oldScale = stage.scaleX();
-    const nextZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, e.evt.deltaY > 0 ? zoom / 1.1 : zoom * 1.1));
-    const newScale = baseScale * nextZoom;
-    const mousePointTo = { x: (pointer.x - stage.x()) / oldScale, y: (pointer.y - stage.y()) / oldScale };
-    setZoom(nextZoom);
-    setPan({ x: pointer.x - mousePointTo.x * newScale, y: pointer.y - mousePointTo.y * newScale });
+  const cursor = placing ? "crosshair" : isEdit ? "default" : "grab";
+  const planReady = !backgroundImageUrl || imageStatus === "loaded" || imageStatus === "failed";
+  const ready = planReady && !!sprites && size.width > 0;
+
+  useLayoutEffect(() => {
+    refresh();
+  });
+
+  /** The placement ghost follows the pointer imperatively — no React render per mouse move. */
+  const moveGhost = () => {
+    const ghost = ghostRef.current;
+    if (!ghost) return;
+    const pos = placing ? pointerInImage() : null;
+    ghost.visible(!!pos);
+    if (pos) ghost.position(pos);
+    ghost.getLayer()?.batchDraw();
   };
 
-  const cursor = placing ? "crosshair" : isEdit ? "default" : "grab";
+  const deleteHint =
+    isEdit && activeAction === "delete"
+      ? activeObjectType === "utilities"
+        ? "Click a utility to delete it"
+        : activeObjectType === "rooms"
+          ? "Click a room to delete it"
+          : activeObjectType === "desks"
+            ? "Click a desk to delete it"
+            : null
+      : null;
 
   return (
-    <div className="space-y-3">
-      {/* Placement forms for map objects that need a name before placing */}
-      {placingUtility && (
-        <div className="flex flex-wrap items-end gap-2 rounded-md border bg-white p-3">
-          <div className="grid gap-1">
-            <Label htmlFor="new-utility-type">Utility type</Label>
-            <Input id="new-utility-type" placeholder="Printer, Kitchen, Lift…" value={newUtilityType} onChange={(e) => setNewUtilityType(e.target.value)} className="w-48" />
-          </div>
-          <div className="grid gap-1">
-            <Label htmlFor="new-utility-label">Label (optional)</Label>
-            <Input id="new-utility-label" value={newUtilityLabel} onChange={(e) => setNewUtilityLabel(e.target.value)} className="w-48" />
-          </div>
-          <p className="text-muted-foreground text-xs">Then click the floor plan to place it.</p>
-          <Button size="sm" variant="outline" onClick={onCancelAction}>
-            Cancel
-          </Button>
-        </div>
-      )}
-      {placingRoom && (
-        <div className="flex flex-wrap items-end gap-2 rounded-md border bg-white p-3">
-          <div className="grid gap-1">
-            <Label htmlFor="new-room-name">Room name</Label>
-            <Input id="new-room-name" placeholder="Meeting Room A" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} className="w-56" />
-          </div>
-          <p className="text-muted-foreground text-xs">Then click the floor plan to place it.</p>
-          <Button size="sm" variant="outline" onClick={onCancelAction}>
-            Cancel
-          </Button>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        {placingDesk && (
-          <span className="rounded-md bg-blue-50 px-2 py-1 text-xs text-blue-700" role="status">
-            Placing a desk — click the floor plan (Esc to cancel)
-          </span>
-        )}
-        {isEdit && activeObjectType === "utilities" && activeAction === "delete" && (
-          <span className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800" role="status">
-            Click a utility to delete it
-          </span>
-        )}
-        {isEdit && activeObjectType === "rooms" && activeAction === "delete" && (
-          <span className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800" role="status">
-            Click a room to delete it
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-muted-foreground text-xs">Zoom {Math.round(zoom * 100)}%</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setZoom(1);
-              setPan({ x: 0, y: 0 });
-            }}
-          >
-            Reset View
-          </Button>
-        </div>
-      </div>
-
+    <div ref={wrapperRef} className={cn("relative h-full min-h-0 w-full overflow-hidden", MAP_BACKGROUND)}>
       <div
         ref={containerRef}
-        className={cn("relative w-full overflow-hidden rounded-lg border bg-gray-100", placing && "ring-2 ring-blue-400")}
+        className={cn("absolute inset-0 transition-shadow duration-150", placing && "ring-cyan/70 ring-2 ring-inset")}
         style={{ cursor }}
         data-testid="floor-canvas-editor"
       >
-        {containerWidth > 0 && (
+        {size.width > 0 && (
           <Stage
             ref={stageRef}
-            width={stageWidth}
-            height={stageHeight}
-            scaleX={scale}
-            scaleY={scale}
-            x={pan.x}
-            y={pan.y}
+            width={size.width}
+            height={size.height}
             draggable={!placing}
-            onDragEnd={(e) => {
-              if (e.target === e.target.getStage()) setPan({ x: e.target.x(), y: e.target.y() });
-            }}
+            {...stageHandlers}
             onClick={handleStageClick}
             onTap={handleStageClick}
-            onWheel={handleWheel}
-            onMouseMove={() => {
-              if (placing) setGhost(pointerInImage());
+            onMouseMove={moveGhost}
+            onMouseLeave={() => {
+              ghostRef.current?.visible(false);
+              ghostRef.current?.getLayer()?.batchDraw();
             }}
-            onMouseLeave={() => setGhost(null)}
           >
             <Layer>
               {image ? (
-                <KonvaImage name="background" image={image} width={imageWidth} height={imageHeight} />
+                <>
+                  <Rect width={imageWidth} height={imageHeight} fill="#ffffff" listening={false} />
+                  <KonvaImage name="background" image={image} width={imageWidth} height={imageHeight} perfectDrawEnabled={false} />
+                </>
               ) : (
-                <Rect name="background" width={imageWidth} height={imageHeight} fill="#f3f4f6" stroke="#d1d5db" strokeWidth={1 / scale} />
-              )}
-              {!backgroundImageUrl && (
-                <Text
-                  text="No floor plan uploaded yet — desks can still be placed on this blank plan"
-                  x={imageWidth * 0.1}
-                  y={imageHeight / 2 - fontSize}
-                  width={imageWidth * 0.8}
-                  align="center"
-                  fontSize={fontSize * 1.4}
-                  fill="#6b7280"
-                  listening={false}
-                />
+                <Rect name="background" width={imageWidth} height={imageHeight} fill="#f6f8fa" stroke="#cfd7e0" strokeWidth={1} strokeScaleEnabled={false} dash={[6, 4]} />
               )}
 
               {rooms.map((room) => {
@@ -398,13 +326,24 @@ export function FloorCanvasEditor({
                       if (isEdit && activeObjectType === "rooms" && activeAction === "delete") setPendingDelete({ kind: "room", id: room.id, label: room.name });
                     }}
                     onDragEnd={(e) => {
+                      e.cancelBubble = true;
                       const next = clamp(e.target.x(), e.target.y());
                       e.target.position(next);
                       updateRoom.mutate({ roomId: room.id, name: room.name, x: next.x, y: next.y, width: room.width, height: room.height });
                     }}
                   >
-                    <Rect width={room.width} height={room.height} fill="rgba(99, 102, 241, 0.18)" stroke={selected ? "#4338ca" : "#6366f1"} strokeWidth={(selected ? 2 : 1) / scale} />
-                    <Text text={room.name} x={4 / scale} y={4 / scale} fontSize={fontSize} fill="#3730a3" listening={false} />
+                    <Rect
+                      width={room.width}
+                      height={room.height}
+                      fill={selected ? "rgba(29, 191, 194, 0.16)" : "rgba(0, 38, 76, 0.07)"}
+                      stroke={selected ? "#1dbfc2" : "rgba(0, 38, 76, 0.45)"}
+                      strokeWidth={selected ? 2 : 1}
+                      strokeScaleEnabled={false}
+                      cornerRadius={3}
+                    />
+                    <Group name={COUNTER_SCALE} listening={false}>
+                      <Text x={6} y={5} text={room.name} fontSize={11} fontStyle="600" fontFamily={FONT} fill="#0d2137" />
+                    </Group>
                   </Group>
                 );
               })}
@@ -416,6 +355,7 @@ export function FloorCanvasEditor({
                     key={utility.id}
                     x={utility.x}
                     y={utility.y}
+                    name={COUNTER_SCALE}
                     draggable={isEdit && !placing}
                     onClick={(e) => {
                       if (placing) return;
@@ -425,100 +365,133 @@ export function FloorCanvasEditor({
                         setPendingDelete({ kind: "utility", id: utility.id, label: utility.label ?? utility.type });
                     }}
                     onDragEnd={(e) => {
+                      e.cancelBubble = true;
                       const next = clamp(e.target.x(), e.target.y());
                       e.target.position(next);
                       updateUtility.mutate({ utilityId: utility.id, type: utility.type, label: utility.label ?? undefined, x: next.x, y: next.y });
                     }}
                   >
-                    <Circle radius={markerRadius * 0.45} fill="#0ea5e9" stroke={selected ? "#0c4a6e" : "#ffffff"} strokeWidth={(selected ? 2 : 1) / scale} />
-                    <Text text={utility.label ?? utility.type} x={markerRadius * 0.6} y={-fontSize / 2} fontSize={fontSize * 0.9} fill="#0369a1" listening={false} />
+                    <Circle radius={selected ? 8 : 6.5} fill="#0e7c86" stroke={selected ? "#1dbfc2" : "#ffffff"} strokeWidth={selected ? 3 : 2} />
+                    <Text x={11} y={-6} text={utility.label ?? utility.type} fontSize={11} fontStyle="500" fontFamily={FONT} fill="#0e5a61" listening={false} />
                   </Group>
                 );
               })}
 
-              {desks.map((desk) => {
-                const position = dragOverrides[desk.id] ?? { x: desk.x, y: desk.y };
-                const selected = desk.id === selectedDeskId;
-                return (
-                  <Group
-                    key={desk.id}
-                    x={position.x}
-                    y={position.y}
-                    draggable={isEdit && !placing}
-                    onClick={(e) => handleDeskClick(desk.id, e)}
-                    onTap={(e) => handleDeskClick(desk.id, e)}
-                    onDblClick={(e) => {
-                      if (placing) return;
-                      e.cancelBubble = true;
-                      if (isEdit) onOpenDesk(desk.id);
-                    }}
-                    onDragStart={() => onSelectDesk(desk.id)}
-                    onDragEnd={(e) => handleDeskDragEnd(desk, e)}
-                    onMouseEnter={(e) => {
-                      if (!placing) e.target.getStage()!.container().style.cursor = isEdit ? "move" : "pointer";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.getStage()!.container().style.cursor = cursor;
-                    }}
-                  >
-                    {selected && <Circle radius={markerRadius * 1.5} fill="rgba(59, 130, 246, 0.2)" listening={false} />}
-                    <Circle
-                      radius={markerRadius}
-                      fill={desk.isActive ? "#10b981" : "#9ca3af"}
-                      stroke={selected ? "#1d4ed8" : "#ffffff"}
-                      strokeWidth={(selected ? 3 : 1.5) / scale}
-                      dash={desk.isActive ? undefined : [3 / scale, 3 / scale]}
-                      shadowColor="#000"
-                      shadowBlur={selected ? 8 / scale : 3 / scale}
-                      shadowOpacity={0.25}
-                    />
-                    {desk.restrictionCount > 0 && (
-                      <Circle x={markerRadius * 0.75} y={-markerRadius * 0.75} radius={markerRadius * 0.35} fill="#f59e0b" stroke="#ffffff" strokeWidth={1 / scale} listening={false} />
-                    )}
-                    <Text
-                      text={desk.number}
-                      x={-markerRadius * 3}
-                      y={markerRadius + 2 / scale}
-                      width={markerRadius * 6}
-                      align="center"
-                      fontSize={fontSize}
-                      fontStyle={selected ? "bold" : "normal"}
-                      fill="#111827"
-                      listening={false}
-                    />
-                  </Group>
-                );
-              })}
-
-              {placing && ghost && placingDesk && (
-                <Group x={ghost.x} y={ghost.y} listening={false}>
-                  <Circle radius={markerRadius} fill="rgba(16, 185, 129, 0.5)" stroke="#047857" strokeWidth={1.5 / scale} dash={[4 / scale, 3 / scale]} />
-                  <Text text="New desk" x={-markerRadius * 3} y={markerRadius + 2 / scale} width={markerRadius * 6} align="center" fontSize={fontSize} fill="#047857" />
-                </Group>
+              {sprites && (
+                <EditorDeskMarkers
+                  desks={desks}
+                  sprites={sprites}
+                  dragOverrides={dragOverrides}
+                  selectedDeskId={selectedDeskId}
+                  draggable={isEdit && !placing}
+                  placing={placing}
+                  isEdit={isEdit}
+                  cursor={cursor}
+                  controls={controls}
+                  onClick={handleDeskClick}
+                  onDblClick={(deskId, e) => {
+                    if (placing) return;
+                    e.cancelBubble = true;
+                    if (isEdit) onOpenDesk(deskId);
+                  }}
+                  onDragStart={(deskId, e) => {
+                    e.cancelBubble = true;
+                    onSelectDesk(deskId);
+                  }}
+                  onDragEnd={handleDeskDragEnd}
+                />
               )}
-              {placing && ghost && (placingUtility || placingRoom) && <Circle x={ghost.x} y={ghost.y} radius={markerRadius * 0.5} fill="rgba(14, 165, 233, 0.5)" listening={false} />}
+
+              <Group ref={ghostRef} name={COUNTER_SCALE} visible={false} listening={false} opacity={0.9}>
+                {placingDesk && sprites?.get("ghost") && (
+                  <>
+                    <KonvaImage image={sprites.get("ghost")} x={-MARKER.anchorX} y={-MARKER.anchorY} width={MARKER.width} height={MARKER.height} />
+                    <KonvaLabel ref={(node) => { node?.offsetX(node.width() / 2); }} y={MARKER.height - MARKER.anchorY + 2}>
+                      <Tag fill="#012b30" cornerRadius={5} />
+                      <Text text="New desk" fontSize={10.5} fontStyle="600" fontFamily={FONT} padding={3} fill="#ffffff" />
+                    </KonvaLabel>
+                  </>
+                )}
+                {(placingUtility || placingRoom) && <Circle radius={7} fill="rgba(14, 124, 134, 0.55)" stroke="#ffffff" strokeWidth={2} />}
+              </Group>
             </Layer>
           </Stage>
         )}
       </div>
 
-      <div className="text-muted-foreground flex flex-wrap items-center gap-4 text-xs">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-full bg-emerald-500" /> Active desk
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-full border border-dashed border-gray-500 bg-gray-400" /> Inactive desk
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-full bg-amber-500" /> Has booking restrictions
-        </span>
-        <span className="ml-auto">
-          {desks.length} desk{desks.length === 1 ? "" : "s"} · {utilities.length} utilities · {rooms.length} rooms · Scroll to zoom, drag the background to pan
-        </span>
-      </div>
+      <MapLoadingOverlay visible={!ready} />
+
+      {/* Placement forms for map objects that need a name before placing */}
+      {(placingUtility || placingRoom) && (
+        <div className="bg-surface animate-in fade-in-0 slide-in-from-top-1 absolute top-4 left-4 z-10 w-72 space-y-3 rounded-2xl border p-4 shadow-lg duration-200">
+          <p className="type-card-title">{placingUtility ? "New utility" : "New room or space"}</p>
+          {placingUtility ? (
+            <>
+              <div className="grid gap-1.5">
+                <Label htmlFor="new-utility-type">Utility type</Label>
+                <Input id="new-utility-type" placeholder="Printer, Kitchen, Lift…" value={newUtilityType} onChange={(e) => setNewUtilityType(e.target.value)} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="new-utility-label">Label (optional)</Label>
+                <Input id="new-utility-label" value={newUtilityLabel} onChange={(e) => setNewUtilityLabel(e.target.value)} />
+              </div>
+            </>
+          ) : (
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-room-name">Room name</Label>
+              <Input id="new-room-name" placeholder="Meeting Room A" value={newRoomName} onChange={(e) => setNewRoomName(e.target.value)} />
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <p className="type-helper">Then click the floor plan to place it.</p>
+            <Button size="sm" variant="outline" onClick={onCancelAction}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {(placingDesk || deleteHint) && (
+        <div className="pointer-events-none absolute top-4 left-1/2 z-10 -translate-x-1/2">
+          <span
+            className={cn(
+              "animate-in fade-in-0 slide-in-from-top-1 inline-flex items-center gap-2 rounded-full px-4 py-2 text-[0.8125rem] font-semibold shadow-md duration-200",
+              deleteHint ? "bg-danger text-white" : "bg-navy text-white",
+            )}
+            role="status"
+          >
+            {deleteHint ? <Trash2 className="size-4" /> : <Crosshair className="text-cyan size-4" />}
+            {deleteHint ?? "Click the floor plan to place the desk"}
+            <kbd className="rounded bg-white/15 px-1.5 py-0.5 text-[0.6875rem] font-medium">Esc</kbd>
+          </span>
+        </div>
+      )}
+
+      {overlay && <div className="absolute top-4 right-4 z-10">{overlay}</div>}
+
+      <MapLegend
+        className="absolute bottom-4 left-4 z-10 max-w-[calc(100%-6rem)]"
+        entries={[
+          { kind: "editor-active", label: "Active desk" },
+          { kind: "editor-inactive", label: "Inactive desk" },
+        ]}
+        extra={
+          <>
+            <span className="text-text-secondary flex items-center gap-2 font-medium">
+              <span aria-hidden className="size-2.5 rounded-full ring-2 ring-white" style={{ backgroundColor: RESTRICTION_BADGE }} />
+              Has restrictions
+            </span>
+            <span className="text-muted-foreground border-l pl-4 tabular-nums">
+              {desks.length} desk{desks.length === 1 ? "" : "s"} · {utilities.length} utilities · {rooms.length} rooms
+            </span>
+          </>
+        }
+      />
+      <MapControls viewport={controls} className="absolute right-4 bottom-4 z-10" fullscreenTarget={wrapperRef} />
+      {iconSource}
 
       <Dialog open={!!pendingDelete} onOpenChange={(open) => !open && setPendingDelete(null)}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
               Delete {pendingDelete?.kind} “{pendingDelete?.label}”?
@@ -548,3 +521,115 @@ export function FloorCanvasEditor({
     </div>
   );
 }
+
+interface EditorDeskMarkersProps {
+  desks: EditorDesk[];
+  sprites: MarkerSprites;
+  dragOverrides: Record<string, { x: number; y: number }>;
+  selectedDeskId: string | null;
+  draggable: boolean;
+  placing: boolean;
+  isEdit: boolean;
+  cursor: string;
+  controls: MapViewportControls;
+  onClick: (deskId: string, e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
+  onDblClick: (deskId: string, e: Konva.KonvaEventObject<MouseEvent>) => void;
+  onDragStart: (deskId: string, e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd: (desk: EditorDesk, e: Konva.KonvaEventObject<DragEvent>) => void;
+}
+
+const EditorDeskMarkers = memo(function EditorDeskMarkers({
+  desks,
+  sprites,
+  dragOverrides,
+  selectedDeskId,
+  draggable,
+  placing,
+  isEdit,
+  cursor,
+  controls,
+  onClick,
+  onDblClick,
+  onDragStart,
+  onDragEnd,
+}: EditorDeskMarkersProps) {
+  const { refresh, labelsVisible } = controls;
+  useLayoutEffect(() => {
+    refresh();
+  });
+
+  const ordered = selectedDeskId ? [...desks.filter((d) => d.id !== selectedDeskId), ...desks.filter((d) => d.id === selectedDeskId)] : desks;
+
+  return (
+    <>
+      {ordered.map((desk) => {
+        const position = dragOverrides[desk.id] ?? { x: desk.x, y: desk.y };
+        const selected = desk.id === selectedDeskId;
+        const kind = desk.isActive ? "editor-active" : "editor-inactive";
+        return (
+          <Group
+            key={desk.id}
+            x={position.x}
+            y={position.y}
+            name={COUNTER_SCALE}
+            draggable={draggable}
+            onClick={(e) => onClick(desk.id, e)}
+            onTap={(e) => onClick(desk.id, e)}
+            onDblClick={(e) => onDblClick(desk.id, e)}
+            onDragStart={(e) => onDragStart(desk.id, e)}
+            onDragEnd={(e) => {
+              e.cancelBubble = true;
+              onDragEnd(desk, e);
+            }}
+            // Hover shows the desk number only. The group's scale is owned by the viewport's
+            // counter-scaling — animating it here would resize markers mid-zoom.
+            onMouseEnter={(e) => {
+              if (placing) return;
+              const stage = e.target.getStage();
+              if (stage) stage.container().style.cursor = isEdit ? "move" : "pointer";
+              (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(true);
+            }}
+            onMouseLeave={(e) => {
+              const stage = e.target.getStage();
+              if (stage) stage.container().style.cursor = cursor;
+              if (!selected && !labelsVisible()) (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(false);
+            }}
+          >
+            <KonvaImage
+              image={sprites.get(selected ? `${kind}:selected` : kind)}
+              x={-MARKER.anchorX}
+              y={-MARKER.anchorY}
+              width={MARKER.width}
+              height={MARKER.height}
+              perfectDrawEnabled={false}
+            />
+            {desk.restrictionCount > 0 && (
+              <Circle
+                x={MARKER.badgeOffset}
+                y={-MARKER.badgeOffset}
+                radius={MARKER.badgeRadius}
+                fill={RESTRICTION_BADGE}
+                stroke="#ffffff"
+                strokeWidth={1.5}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            )}
+            <KonvaLabel
+              ref={(node) => {
+                node?.offsetX(node.width() / 2);
+              }}
+              name={selected ? undefined : LABEL_NAME}
+              y={MARKER.height - MARKER.anchorY + 2}
+              listening={false}
+            >
+              <Tag fill={selected ? "#00264c" : "#ffffff"} stroke={selected ? "#00264c" : "#d3dbe4"} strokeWidth={1} cornerRadius={5} perfectDrawEnabled={false} />
+              <Text text={desk.number} fontSize={10.5} fontStyle="600" fontFamily={FONT} padding={3} fill={selected ? "#ffffff" : "#0d2137"} perfectDrawEnabled={false} />
+            </KonvaLabel>
+          </Group>
+        );
+      })}
+    </>
+  );
+});
+

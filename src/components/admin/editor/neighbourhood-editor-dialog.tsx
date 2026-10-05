@@ -186,7 +186,7 @@ export function NeighbourhoodEditorDialog({
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`h-8 w-8 rounded border-2 ${color === c ? "border-gray-900" : "border-gray-300"}`}
+                  className={`h-8 w-8 rounded border-2 ${color === c ? "border-navy" : "border-border-strong"}`}
                   style={{ backgroundColor: c }}
                   title={c}
                 />
@@ -221,8 +221,8 @@ export function NeighbourhoodEditorDialog({
           <div className="space-y-2">
             <Label>Assigned Desks *</Label>
             {preSelectedDeskIds.length > 0 && !neighbourhood ? (
-              <div className="rounded border border-green-200 bg-green-50 p-3">
-                <p className="mb-2 text-sm font-medium text-green-900">
+              <div className="rounded border border-success/25 bg-success-soft p-3">
+                <p className="mb-2 text-sm font-medium text-success">
                   {selectedDeskIds.size} desk(s) selected
                 </p>
                 <div className="space-y-1">
@@ -231,7 +231,7 @@ export function NeighbourhoodEditorDialog({
                     .filter(Boolean)
                     .map((desk) => (
                       <div key={desk!.id} className="flex items-center gap-2 text-sm">
-                        <span className="rounded bg-green-200 px-2 py-1">Desk {desk!.number}</span>
+                        <span className="rounded bg-success/20 px-2 py-1">Desk {desk!.number}</span>
                       </div>
                     ))}
                 </div>

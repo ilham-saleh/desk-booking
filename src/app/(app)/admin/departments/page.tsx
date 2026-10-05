@@ -54,11 +54,11 @@ export default function DepartmentsPage() {
   };
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Departments</h1>
-          <p className="mt-2 text-gray-600">Create and manage departments for your organization.</p>
+          <h1 className="type-page-title">Departments</h1>
+          <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">Create and manage departments for your organization.</p>
         </div>
         <Button
           onClick={() => setIsCreateOpen(true)}
@@ -76,7 +76,7 @@ export default function DepartmentsPage() {
         </CardHeader>
         <CardContent>
           {departments.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
+            <div className="text-center text-muted-foreground py-8">
               No departments yet. Create one to get started.
             </div>
           ) : (

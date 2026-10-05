@@ -224,9 +224,9 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
 
   return (
     <>
-      <DialogHeader className="bg-neutral-800 px-6 py-4 text-white">
+      <DialogHeader className="bg-navy px-6 py-4 text-white">
         <DialogTitle className="text-xl text-white">Editing Desk: {desk.number}</DialogTitle>
-        <DialogDescription className="text-neutral-300">
+        <DialogDescription className="text-light-blue/80">
           {desk.floor.site.name} · {desk.floor.name}
           {desk.restrictionAssignments.length > 0 && ` · ${desk.restrictionAssignments.length} restriction block${desk.restrictionAssignments.length === 1 ? "" : "s"}`}
         </DialogDescription>
@@ -270,7 +270,7 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
           </h3>
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor="desk-active" className="text-sm">
-              Desk status: <span className={isActive ? "font-semibold text-emerald-700" : "font-semibold text-gray-500"}>{isActive ? "Active" : "Inactive"}</span>
+              Desk status: <span className={isActive ? "font-semibold text-success" : "font-semibold text-muted-foreground"}>{isActive ? "Active" : "Inactive"}</span>
             </Label>
             <Switch id="desk-active" checked={isActive} onCheckedChange={setIsActive} aria-label="Desk active" />
           </div>
@@ -310,7 +310,7 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
 
           <div className="space-y-4 border-t pt-4">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold tracking-wide text-gray-600 uppercase">Bookings restricted to</h4>
+              <h4 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Bookings restricted to</h4>
               <div className="flex gap-1">
                 <Button type="button" variant="ghost" size="sm" onClick={() => setShiftsDialogFor(-1)}>
                   Manage shifts
@@ -332,11 +332,11 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
               const restriction = block.restrictionId ? restrictions.data?.find((r) => r.id === block.restrictionId) : undefined;
               const blockOverlaps = shift ? shift.daysOfWeek.some((d) => overlappingDays.includes(d)) : false;
               return (
-                <fieldset key={block.key} className={`space-y-3 rounded-lg border p-3 ${blockOverlaps ? "border-amber-400 bg-amber-50/40" : "bg-gray-50/60"}`}>
+                <fieldset key={block.key} className={`space-y-3 rounded-lg border p-3 ${blockOverlaps ? "border-[#f5d2b3] bg-warning-soft/50" : "bg-surface-muted"}`}>
                   <legend className="sr-only">Restriction block {index + 1}</legend>
                   <div className="flex items-start gap-2">
                     <div className="grid flex-1 gap-1.5">
-                      <Label htmlFor={`block-mode-${block.key}`} className="text-xs text-gray-600">
+                      <Label htmlFor={`block-mode-${block.key}`} className="text-xs text-muted-foreground">
                         Restriction {index + 1}
                       </Label>
                       <Select
@@ -410,18 +410,18 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
                   )}
                   {block.restrictionMode === "ASSIGNED_OCCUPANTS" && (
                     <div className="grid gap-1.5">
-                      <Label className="text-xs text-gray-600">Occupants who can book (up to {MAX_BLOCK_OCCUPANTS})</Label>
+                      <Label className="text-xs text-muted-foreground">Occupants who can book (up to {MAX_BLOCK_OCCUPANTS})</Label>
                       <BlockOccupantPicker
                         values={block.occupantUserIds}
                         labels={block.occupantLabels}
                         onChange={(ids, labels) => updateBlock(block.key, { occupantUserIds: ids, occupantLabels: { ...block.occupantLabels, ...labels } })}
                       />
-                      {block.occupantUserIds.length === 0 && <p className="text-xs text-amber-800">Type a name or email and pick at least one occupant.</p>}
+                      {block.occupantUserIds.length === 0 && <p className="text-xs text-[#6b3608]">Type a name or email and pick at least one occupant.</p>}
                     </div>
                   )}
                   {block.restrictionMode === "DEPARTMENT" && (
                     <div className="grid gap-1.5">
-                      <Label className="text-xs text-gray-600">Departments whose people can book</Label>
+                      <Label className="text-xs text-muted-foreground">Departments whose people can book</Label>
                       <MultiCombobox
                         aria-label="Departments"
                         values={block.departmentNames}
@@ -432,12 +432,12 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
                         emptyText="No department with that name on any employee record"
                         className="bg-white"
                       />
-                      {block.departmentNames.length === 0 && <p className="text-xs text-amber-800">Pick at least one department.</p>}
+                      {block.departmentNames.length === 0 && <p className="text-xs text-[#6b3608]">Pick at least one department.</p>}
                     </div>
                   )}
 
                   <div className="grid gap-1.5">
-                    <Label className="text-xs text-gray-600">Availability (shifts)</Label>
+                    <Label className="text-xs text-muted-foreground">Availability (shifts)</Label>
                     <Combobox
                       aria-label="Availability shift"
                       value={block.shiftId}
@@ -462,7 +462,7 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
                       )}
                     />
                     {shift && <p className="text-muted-foreground text-xs">{formatDays(shift.daysOfWeek)}</p>}
-                    {blockOverlaps && <p className="text-xs text-amber-800">Overlaps another block on {formatDays(shift!.daysOfWeek.filter((d) => overlappingDays.includes(d)))}.</p>}
+                    {blockOverlaps && <p className="text-xs text-[#6b3608]">Overlaps another block on {formatDays(shift!.daysOfWeek.filter((d) => overlappingDays.includes(d)))}.</p>}
                   </div>
 
                   <Button type="button" variant="link" size="sm" className="h-auto px-0 text-xs font-semibold tracking-wide uppercase" onClick={() => setWindowFor(block.key)}>
@@ -529,7 +529,7 @@ function DeskEditForm({ desk, onCancel, onSaved }: { desk: DeskDetail; onCancel:
       </div>
 
       <DialogFooter className="items-center border-t bg-white px-6 py-4 sm:justify-between">
-        <p role={error ? "alert" : undefined} className={`text-sm ${error ? "text-red-700" : "text-muted-foreground"}`}>
+        <p role={error ? "alert" : undefined} className={`text-sm ${error ? "text-danger" : "text-muted-foreground"}`}>
           {error ?? (overlappingDays.length > 0 ? `Fix the overlap on ${formatDays(overlappingDays)} before saving.` : "Changes are saved when you press Save.")}
         </p>
         <div className="flex gap-2">
@@ -621,7 +621,7 @@ function AdvanceWindowForm({ initial, onSave, onCancel }: { initial: number | nu
         <span className="text-sm">days in advance</span>
       </div>
       {!valid && (
-        <p role="alert" className="text-sm text-red-700">
+        <p role="alert" className="text-sm text-danger">
           Enter a whole number between 1 and 730.
         </p>
       )}

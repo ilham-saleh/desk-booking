@@ -4,14 +4,10 @@ import { MapPinIcon } from "lucide-react";
 
 import { api } from "@/lib/trpc/client";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/loading";
+import { DetailRow, SidePanel, SidePanelBody, SidePanelHeader, SidePanelSection } from "@/components/ui/side-panel";
 import { StatusBadge } from "@/components/booking/desk-panel";
 
 export interface PersonPanelBooking {
@@ -58,92 +54,81 @@ export function PersonPanel({
   const card = api.search.person.useQuery({ userId: userId! }, { enabled: open && !!userId });
   const person = card.data?.person;
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
-        <SheetHeader className="border-b">
-          <SheetTitle>{person?.name ?? "Person"}</SheetTitle>
-          <SheetDescription>
-            {person
-              ? [person.title, person.department].filter(Boolean).join(" · ") || "Employee"
-              : "Loading…"}
-          </SheetDescription>
-        </SheetHeader>
+  if (!open) return null;
 
-        <div className="flex flex-col gap-5 p-4 text-sm">
-          {card.isPending && <p className="text-muted-foreground">Loading details…</p>}
-          {card.error && (
-            <p role="alert" className="text-destructive">
+  return (
+    <SidePanel dockAt="xl" aria-label="Person details">
+      <SidePanelHeader
+        title={person?.name ?? (card.isPending ? "Loading…" : "Person")}
+        subtitle={person ? [person.title, person.department].filter(Boolean).join(" · ") || "Employee" : undefined}
+        onClose={() => onOpenChange(false)}
+        status={person && !person.isActive ? <Badge variant="muted" dot>Inactive</Badge> : undefined}
+      />
+
+      <SidePanelBody>
+        {card.isPending && (
+          <SidePanelSection>
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-12 rounded-full" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-1/2" />
+              </div>
+            </div>
+          </SidePanelSection>
+        )}
+        {card.error && (
+          <SidePanelSection>
+            <p role="alert" className="text-danger text-sm">
               {card.error.message}
             </p>
-          )}
+          </SidePanelSection>
+        )}
 
-          {person && (
-            <>
+        {person && (
+          <>
+            <SidePanelSection>
               <div className="flex items-center gap-3">
-                <Avatar className="size-14">
-                  <AvatarFallback className="text-lg font-medium">
-                    {person.name.charAt(0).toUpperCase()}
-                  </AvatarFallback>
+                <Avatar className="size-12">
+                  <AvatarFallback className="bg-navy text-base text-white">{person.name.charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
-                <dl className="grid gap-0.5">
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-24 shrink-0">Email</dt>
-                    <dd className="truncate">{person.email}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-24 shrink-0">Department</dt>
-                    <dd>{person.department ?? "—"}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="text-muted-foreground w-24 shrink-0">Title</dt>
-                    <dd>{person.title ?? "—"}</dd>
-                  </div>
-                  {!person.isActive && (
-                    <div className="flex gap-2">
-                      <dt className="text-muted-foreground w-24 shrink-0">Status</dt>
-                      <dd>Inactive</dd>
-                    </div>
-                  )}
+                <dl className="min-w-0 flex-1 space-y-1.5">
+                  <DetailRow label="Email">
+                    <span className="block truncate">{person.email}</span>
+                  </DetailRow>
+                  <DetailRow label="Department">{person.department ?? "—"}</DetailRow>
+                  <DetailRow label="Title">{person.title ?? "—"}</DetailRow>
                 </dl>
               </div>
+            </SidePanelSection>
 
-              <section className="space-y-2 border-t pt-4" aria-labelledby="person-current-heading">
-                <h3 id="person-current-heading" className="font-medium">
-                  Sitting now
-                </h3>
-                {card.data?.currentBooking ? (
-                  <BookingCard booking={card.data.currentBooking} onLocate={onLocate} />
-                ) : (
-                  <p className="text-muted-foreground">No desk booked right now</p>
-                )}
-              </section>
-
-              <section className="space-y-2 border-t pt-4" aria-labelledby="person-next-heading">
-                <h3 id="person-next-heading" className="font-medium">
-                  Next booking
-                </h3>
-                {card.data?.nextBooking ? (
-                  <BookingCard booking={card.data.nextBooking} onLocate={onLocate} />
-                ) : (
-                  <p className="text-muted-foreground">No upcoming booking</p>
-                )}
-              </section>
-
-              {card.data?.hiddenByPolicy && (
-                <p
-                  role="status"
-                  className="text-muted-foreground bg-muted/40 rounded-md border p-3 text-xs"
-                >
-                  Some bookings aren&apos;t shown because their site keeps coworker bookings
-                  private.
-                </p>
+            <SidePanelSection title="Sitting now">
+              {card.data?.currentBooking ? (
+                <BookingCard booking={card.data.currentBooking} onLocate={onLocate} />
+              ) : (
+                <p className="text-muted-foreground text-sm">No desk booked right now</p>
               )}
-            </>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
+            </SidePanelSection>
+
+            <SidePanelSection title="Next booking">
+              {card.data?.nextBooking ? (
+                <BookingCard booking={card.data.nextBooking} onLocate={onLocate} />
+              ) : (
+                <p className="text-muted-foreground text-sm">No upcoming booking</p>
+              )}
+            </SidePanelSection>
+
+            {card.data?.hiddenByPolicy && (
+              <SidePanelSection>
+                <p role="status" className="bg-surface-muted text-muted-foreground rounded-xl p-3 text-xs">
+                  Some bookings aren&apos;t shown because their site keeps coworker bookings private.
+                </p>
+              </SidePanelSection>
+            )}
+          </>
+        )}
+      </SidePanelBody>
+    </SidePanel>
   );
 }
 
@@ -155,15 +140,15 @@ function BookingCard({
   onLocate: (booking: PersonPanelBooking) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-      <div className="min-w-0">
-        <p className="font-medium">
-          Desk {booking.desk.number} <StatusBadge status={booking.status} className="ml-1" />
+    <div className="bg-surface-muted flex items-center justify-between gap-3 rounded-xl border p-3">
+      <div className="min-w-0 space-y-0.5">
+        <p className="text-foreground flex items-center gap-2 font-semibold">
+          Desk {booking.desk.number} <StatusBadge status={booking.status} />
         </p>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground truncate text-xs">
           {booking.site.name} · {booking.floor.name}
         </p>
-        <p className="text-muted-foreground text-xs">{formatWhen(booking)}</p>
+        <p className="text-muted-foreground text-xs tabular-nums">{formatWhen(booking)}</p>
       </div>
       <Button size="sm" variant="outline" onClick={() => onLocate(booking)}>
         <MapPinIcon aria-hidden className="size-3.5" />

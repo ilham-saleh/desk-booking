@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface Desk {
   id: string;
@@ -41,44 +40,43 @@ export function NeighbourhoodDeskSelector({ desks, onSelectionComplete, onCancel
   };
 
   return (
-    <Card className="border-blue-200 bg-blue-50">
-      <CardHeader>
-        <CardTitle>Select Desks for Neighbourhood</CardTitle>
-        <CardDescription>
-          Click on desks in the list below to select them. Shift+Click on the map to select desks (if available).
-          Selected: {selectedDeskIds.size}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="max-h-64 space-y-2 overflow-y-auto rounded border border-blue-200 bg-white p-3">
-          {desks.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No desks available</p>
-          ) : (
-            desks.map((desk) => (
+    <div className="bg-surface animate-in fade-in-0 slide-in-from-right-1 flex max-h-[min(32rem,calc(100dvh-12rem))] w-80 flex-col rounded-2xl border shadow-lg duration-200">
+      <div className="space-y-1 border-b px-4 pt-4 pb-3">
+        <p className="type-card-title">Select desks for neighbourhood</p>
+        <p className="type-helper">
+          Choose the desks that belong together. <span className="text-foreground font-semibold tabular-nums">{selectedDeskIds.size}</span> selected
+        </p>
+      </div>
+      <div className="scroll-quiet grid min-h-0 flex-1 grid-cols-3 content-start gap-1.5 overflow-y-auto p-3">
+        {desks.length === 0 ? (
+          <p className="text-muted-foreground col-span-3 text-sm">No desks available</p>
+        ) : (
+          desks.map((desk) => {
+            const selected = selectedDeskIds.has(desk.id);
+            return (
               <button
                 key={desk.id}
+                type="button"
+                aria-pressed={selected}
                 onClick={() => toggleDesk(desk.id)}
-                className={`block w-full rounded px-3 py-2 text-left text-sm transition-colors ${
-                  selectedDeskIds.has(desk.id)
-                    ? "bg-blue-500 text-white"
-                    : "bg-gray-100 hover:bg-gray-200"
+                className={`focus-visible:ring-cyan/40 h-9 rounded-lg border text-[0.8125rem] font-medium tabular-nums transition-colors duration-100 outline-none focus-visible:ring-2 ${
+                  selected ? "border-navy bg-navy text-white" : "bg-surface text-text-secondary hover:border-navy/30 hover:text-navy"
                 }`}
               >
-                Desk {desk.number}
+                {desk.number}
               </button>
-            ))
-          )}
-        </div>
-
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onCancel} className="flex-1">
-            Cancel
-          </Button>
-          <Button onClick={handleComplete} disabled={selectedDeskIds.size === 0} className="flex-1">
-            Continue ({selectedDeskIds.size} selected)
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+            );
+          })
+        )}
+      </div>
+      <div className="flex gap-2 border-t p-3">
+        <Button variant="outline" size="sm" onClick={onCancel} className="flex-1">
+          Cancel
+        </Button>
+        <Button size="sm" onClick={handleComplete} disabled={selectedDeskIds.size === 0} className="flex-1">
+          Continue
+        </Button>
+      </div>
+    </div>
   );
 }

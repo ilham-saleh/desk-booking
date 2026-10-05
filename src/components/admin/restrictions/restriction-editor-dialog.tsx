@@ -268,7 +268,7 @@ function RestrictionEditorForm({
         </p>
 
         {error && (
-          <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+          <p role="alert" className="rounded-md border border-danger/25 bg-danger-soft p-2 text-sm text-danger">
             {error}
           </p>
         )}

@@ -34,6 +34,18 @@ const adminNavItems: NavItem[] = [
   { label: "Restrictions", href: "/admin/restrictions", icon: Lock },
 ];
 
+export interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+/** Sidebar sections. Display concern only — authorization is re-checked server-side on every request. */
+export function getNavGroups(role: Role): NavGroup[] {
+  const groups: NavGroup[] = [{ label: "Workplace", items: userNavItems }];
+  if (isAdminRole(role)) groups.push({ label: "Administration", items: adminNavItems });
+  return groups;
+}
+
 /** Display concern only — actual authorization is re-checked server-side on every request. */
 export function getNavItems(role: Role): NavItem[] {
   // Admin roles (FACILITY_ADMIN/SITE_ADMIN, ORG_SUPER_ADMIN) see employee + admin nav

@@ -70,7 +70,7 @@ export function BookingSubjectFields({
       <div className="grid gap-1.5">
         <Label htmlFor="booking-subject-mode">Book for</Label>
         <Select value={mode} onValueChange={(v) => onModeChange(v as BookingSubjectMode)}>
-          <SelectTrigger id="booking-subject-mode">
+          <SelectTrigger id="booking-subject-mode" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

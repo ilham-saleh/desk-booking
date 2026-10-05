@@ -2,39 +2,23 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { MapPinIcon } from "lucide-react";
 import { toast } from "sonner";
 
-import { currentMinutesInTimeZone } from "@/lib/time-slots";
+import { CalendarCheck, CalendarPlus, History, MapPinIcon } from "lucide-react";
+
+import { locateOnMapQuery } from "@/lib/locate-on-map";
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { TableSkeleton } from "@/components/ui/loading";
+import { PageContainer, PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatDisplayDate } from "@/lib/dates";
 import { StatusBadge } from "@/components/booking/desk-panel";
 
 type When = "upcoming" | "past";
-
-/** Deep-link query that opens the Floor Map on this booking's site/floor/date/time with the desk highlighted. */
-function locateOnMapQuery(booking: {
-  deskId: string;
-  startAt: Date;
-  endAt: Date;
-  desk: { floor: { id: string; siteId: string; site: { timeZone: string } } };
-}): Record<string, string> {
-  const timeZone = booking.desk.floor.site.timeZone;
-  const date = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(
-    new Date(booking.startAt),
-  );
-  const endMinutes = currentMinutesInTimeZone(timeZone, new Date(booking.endAt));
-  return {
-    site: booking.desk.floor.siteId,
-    floor: booking.desk.floor.id,
-    desk: booking.deskId,
-    date,
-    start: String(currentMinutesInTimeZone(timeZone, new Date(booking.startAt))),
-    end: String(endMinutes === 0 ? 24 * 60 : endMinutes),
-  };
-}
 
 export default function BookingsPage() {
   const [tab, setTab] = useState<When>("upcoming");
@@ -69,35 +53,51 @@ export default function BookingsPage() {
   const now = new Date();
 
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold">My Bookings</h1>
-        <p className="text-muted-foreground text-sm">Cancellation is allowed any time before a booking starts.</p>
-      </div>
+    <PageContainer>
+      <PageHeader
+        title="My Bookings"
+        description="Cancellation is allowed any time before a booking starts."
+        actions={
+          <Button asChild variant="brand">
+            <Link href="/book">
+              <CalendarPlus /> Book a desk
+            </Link>
+          </Button>
+        }
+      />
 
-      <div className="flex gap-2">
-        <Button size="sm" className="rounded-full" variant={tab === "upcoming" ? "default" : "outline"} onClick={() => setTab("upcoming")}>
-          Upcoming
-        </Button>
-        <Button size="sm" className="rounded-full" variant={tab === "past" ? "default" : "outline"} onClick={() => setTab("past")}>
-          Past
-        </Button>
-      </div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as When)}>
+        <TabsList>
+          <TabsTrigger value="upcoming">
+            <CalendarCheck className="size-3.5" /> Upcoming
+          </TabsTrigger>
+          <TabsTrigger value="past">
+            <History className="size-3.5" /> Past
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{tab === "upcoming" ? "Upcoming bookings" : "Past bookings"}</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <Card className="gap-0 overflow-hidden py-0">
           {bookings.isPending ? (
-            <p className="text-muted-foreground text-sm">Loading…</p>
+            <TableSkeleton rows={5} />
           ) : bookings.data?.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No {tab} bookings.</p>
+            <EmptyState
+              icon={tab === "upcoming" ? CalendarCheck : History}
+              title={tab === "upcoming" ? "No upcoming bookings" : "No past bookings"}
+              description={tab === "upcoming" ? "When you book a desk it'll appear here, with a shortcut to find it on the map." : "Bookings you've completed or cancelled will show here."}
+              action={
+                tab === "upcoming" ? (
+                  <Button asChild size="sm">
+                    <Link href="/book">Book a desk</Link>
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Desk</TableHead>
+                  <TableHead className="pl-5">Desk</TableHead>
                   <TableHead>Site / Floor</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Time</TableHead>
@@ -114,11 +114,11 @@ export default function BookingsPage() {
                     );
                   return (
                     <TableRow key={booking.id}>
-                      <TableCell>
+                      <TableCell className="pl-5">
                         {tab === "upcoming" ? (
                           <Link
                             href={{ pathname: "/floor-map", query: locateOnMapQuery(booking) }}
-                            className="inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline"
+                            className="text-navy hover:bg-navy-soft -ml-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 font-semibold transition-colors"
                             title="Locate this desk on the floor map"
                           >
                             <MapPinIcon aria-hidden className="size-3.5" />
@@ -131,15 +131,15 @@ export default function BookingsPage() {
                       <TableCell>
                         {booking.desk.floor.site.name} / {booking.desk.floor.name}
                       </TableCell>
-                      <TableCell>{new Date(booking.date).toISOString().slice(0, 10)}</TableCell>
-                      <TableCell>
+                      <TableCell>{formatDisplayDate(new Date(booking.date).toISOString().slice(0, 10), { year: true })}</TableCell>
+                      <TableCell className="tabular-nums">
                         {format(booking.startAt)}–{format(booking.endAt)}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={booking.status} />
                       </TableCell>
                       {tab === "upcoming" && (
-                        <TableCell>
+                        <TableCell className="pr-5">
                           <div className="flex justify-end gap-2">
                             {booking.status === "CONFIRMED" && new Date(booking.startAt) > now && (
                               <Button
@@ -154,6 +154,7 @@ export default function BookingsPage() {
                             {booking.status === "CONFIRMED" && booking.desk.requiresCheckIn && (
                               <Button
                                 size="sm"
+                                variant="brand"
                                 disabled={actionsPending}
                                 onClick={() => checkIn.mutate({ bookingId: booking.id })}
                               >
@@ -181,8 +182,7 @@ export default function BookingsPage() {
               </TableBody>
             </Table>
           )}
-        </CardContent>
       </Card>
-    </div>
+    </PageContainer>
   );
 }

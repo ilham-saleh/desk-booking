@@ -17,19 +17,19 @@ export default function FloorDetailPage({ params }: FloorDetailPageProps) {
   const { data: floor, isPending } = api.floor.get.useQuery({ floorId });
 
   if (isPending) {
-    return <div className="space-y-6 p-8">Loading floor...</div>;
+    return <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">Loading floor...</div>;
   }
 
   if (!floor) {
-    return <div className="p-8 text-gray-600">Floor not found</div>;
+    return <div className="p-8 text-muted-foreground">Floor not found</div>;
   }
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">{floor.name}</h1>
-          <p className="mt-2 text-gray-600">Manage desks and availability on this floor</p>
+          <h1 className="type-page-title">{floor.name}</h1>
+          <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">Manage desks and availability on this floor</p>
         </div>
         <Button
           variant="outline"
