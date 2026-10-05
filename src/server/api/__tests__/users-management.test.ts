@@ -11,7 +11,7 @@ import { appRouter } from "@/server/api/root";
  *  - Facility Admin scope: can't touch other-site users, System Admins, themselves,
  *    can't assign System Admin, can't grant sites they don't manage
  *  - directory search / role filter / pagination / sort by role
- *  - Save User persists names, email, location, role; role change drops
+ *  - Save User changes only the role (profile is Entra-owned); role change drops
  *    permissions the new role can't use; System Admin demotion is audited
  *  - Booking Manager permissions: initial empty state, add selected, remove
  *  - canBookForUser: BM books for others only at granted sites; standard user never
@@ -83,7 +83,7 @@ async function refreshed(user: SessionUser): Promise<SessionUser> {
 describe("users management", () => {
   beforeAll(async () => {
     await cleanup();
-    org = await db.organization.create({ data: { name: "Users Mgmt", slug: SLUG, ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "Users Mgmt", slug: SLUG } });
     london = await db.site.create({ data: { organizationId: org.id, name: "London - Steward Building", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1140 } });
     newYork = await db.site.create({ data: { organizationId: org.id, name: "New York", timeZone: "America/New_York", operatingHoursStart: 420, operatingHoursEnd: 1140 } });
     const londonFloor = await db.floor.create({ data: { organizationId: org.id, siteId: london.id, name: "Level 2" } });
@@ -112,7 +112,7 @@ describe("users management", () => {
     await expect(callerFor(bookingManager).user.listDirectory({})).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerFor(employee).user.listDirectory({})).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(callerFor(employee).user.get({ userId: bookingManager.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(callerFor(bookingManager).user.save({ userId: employee.id, firstName: "X", lastName: "Y", email: employee.email, location: null, role: Role.STANDARD_USER })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(callerFor(bookingManager).user.save({ userId: employee.id, role: Role.STANDARD_USER })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   // ----- Directory: columns, search, filter, pagination, sort -----
@@ -173,14 +173,14 @@ describe("users management", () => {
     const caller = callerFor(londonAdmin);
     await expect(caller.user.get({ userId: newYorkAdmin.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller.user.get({ userId: systemAdmin.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(caller.user.save({ userId: londonAdmin.id, firstName: "Sarah", lastName: "Smith", email: londonAdmin.email, location: null, role: Role.ORG_SUPER_ADMIN })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.user.save({ userId: londonAdmin.id, role: Role.ORG_SUPER_ADMIN })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(caller.user.addSitePermissions({ userId: londonAdmin.id, siteIds: [newYork.id] })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("stops a Facility Admin creating a System Admin or granting a site they don't manage", async () => {
     const caller = callerFor(londonAdmin);
-    await expect(caller.user.save({ userId: employee.id, firstName: "John", lastName: "Brown", email: employee.email, location: null, role: Role.ORG_SUPER_ADMIN })).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await caller.user.save({ userId: employeeTwo.id, firstName: "James", lastName: "Lee", email: employeeTwo.email, location: null, role: Role.BOOKING_MANAGER });
+    await expect(caller.user.save({ userId: employee.id, role: Role.ORG_SUPER_ADMIN })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await caller.user.save({ userId: employeeTwo.id, role: Role.BOOKING_MANAGER });
     await expect(caller.user.addSitePermissions({ userId: employeeTwo.id, siteIds: [newYork.id] })).rejects.toThrow(/don't manage New York/);
     const detail = await caller.user.get({ userId: employeeTwo.id });
     expect(detail.availableSites.map((site) => site.id)).toEqual([london.id]); // only their own site is offered
@@ -188,27 +188,20 @@ describe("users management", () => {
     expect((await caller.user.get({ userId: employeeTwo.id })).permissions.map((permission) => permission.siteName)).toEqual(["London - Steward Building"]);
   });
 
-  // ----- User Details: save profile + role -----
+  // ----- User Details: save role (profile fields are Entra-owned) -----
 
-  it("saves First Name, Last Name, Email and Location and reads them back", async () => {
+  it("Save User changes only the role and never writes Entra-owned profile fields", async () => {
     const admin = callerFor(systemAdmin);
-    await admin.user.save({ userId: employee.id, firstName: "Jonathan", lastName: "Browne", email: "Jonathan.Browne@um.test", location: "New York", role: Role.STANDARD_USER });
+    // Profile keys aren't in the input schema, so they are stripped rather than written.
+    const input = { userId: employee.id, firstName: "Jonathan", email: bookingManager.email, location: "New York", role: Role.STANDARD_USER };
+    await admin.user.save(input);
     const detail = await admin.user.get({ userId: employee.id });
-    expect(detail).toMatchObject({ firstName: "Jonathan", lastName: "Browne", name: "Jonathan Browne", email: "jonathan.browne@um.test", location: "New York" });
-    expect(detail.title).toBe("Analyst"); // HRIS-owned fields untouched
-    expect(detail.department).toBe("Finance");
-    employee = await refreshed(employee);
-  });
-
-  it("rejects an email already used by another user", async () => {
-    await expect(
-      callerFor(systemAdmin).user.save({ userId: employee.id, firstName: "Jonathan", lastName: "Browne", email: bookingManager.email, location: null, role: Role.STANDARD_USER }),
-    ).rejects.toThrow(/already uses/);
+    expect(detail).toMatchObject({ firstName: "John", lastName: "Brown", email: employee.email, title: "Analyst", department: "Finance", location: "London" });
   });
 
   it("assigning System Admin grants every site without permission rows", async () => {
     const admin = callerFor(systemAdmin);
-    await admin.user.save({ userId: employeeTwo.id, firstName: "James", lastName: "Lee", email: employeeTwo.email, location: null, role: Role.ORG_SUPER_ADMIN });
+    await admin.user.save({ userId: employeeTwo.id, role: Role.ORG_SUPER_ADMIN });
     const detail = await admin.user.get({ userId: employeeTwo.id });
     expect(detail.role).toBe(Role.ORG_SUPER_ADMIN);
     expect(detail.permissionSummary).toBe("All sites and floors");
@@ -222,7 +215,7 @@ describe("users management", () => {
 
   it("demoting a System Admin removes global access and is audited", async () => {
     const admin = callerFor(systemAdmin);
-    await admin.user.save({ userId: employeeTwo.id, firstName: "James", lastName: "Lee", email: employeeTwo.email, location: null, role: Role.STANDARD_USER });
+    await admin.user.save({ userId: employeeTwo.id, role: Role.STANDARD_USER });
     employeeTwo = await refreshed(employeeTwo);
     await expect(callerFor(employeeTwo).user.listDirectory({})).rejects.toMatchObject({ code: "FORBIDDEN" });
     const audit = await db.auditLog.findFirst({ where: { organizationId: org.id, action: "user.roleChanged", targetId: employeeTwo.id }, orderBy: { createdAt: "desc" } });
@@ -231,7 +224,7 @@ describe("users management", () => {
 
   it("Facility Admin gets a managed site and can manage only that site", async () => {
     const admin = callerFor(systemAdmin);
-    await admin.user.save({ userId: employeeTwo.id, firstName: "James", lastName: "Lee", email: employeeTwo.email, location: null, role: Role.SITE_ADMIN });
+    await admin.user.save({ userId: employeeTwo.id, role: Role.SITE_ADMIN });
     employeeTwo = await refreshed(employeeTwo);
     let detail = await admin.user.get({ userId: employeeTwo.id });
     expect(detail.permissionSummary).toBe("No site assigned");
@@ -247,7 +240,7 @@ describe("users management", () => {
 
   it("Facility Admin → Standard User leaves no hidden admin access behind", async () => {
     const admin = callerFor(systemAdmin);
-    const result = await admin.user.save({ userId: employeeTwo.id, firstName: "James", lastName: "Lee", email: employeeTwo.email, location: null, role: Role.STANDARD_USER });
+    const result = await admin.user.save({ userId: employeeTwo.id, role: Role.STANDARD_USER });
     expect(result.removedPermissionCount).toBe(1);
     expect(await db.permission.count({ where: { userId: employeeTwo.id } })).toBe(0);
     employeeTwo = await refreshed(employeeTwo);

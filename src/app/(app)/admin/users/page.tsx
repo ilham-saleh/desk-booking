@@ -7,11 +7,11 @@ import { UsersDirectory } from "@/components/admin/users/users-directory";
  */
 export default function AdminUsersPage() {
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div>
-        <h1 className="text-3xl font-bold">Users</h1>
-        <p className="mt-2 text-gray-600">
-          Employee directory with application roles and site permissions. Employee details will be kept in sync from the HRIS data sheet.
+        <h1 className="type-page-title">Users</h1>
+        <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">
+          Employee directory with application roles and site permissions. Employees appear here after their first Microsoft sign-in; their profile details update from Entra each time they sign in.
         </p>
       </div>
       <UsersDirectory />

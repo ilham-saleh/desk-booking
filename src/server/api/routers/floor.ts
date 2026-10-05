@@ -27,7 +27,7 @@ export const floorRouter = createTRPCRouter({
     }),
   ),
 
-  /** Static floor-map data (background image, desks, rooms, utilities) — see booking.getFloorAvailability for live desk state. */
+  /** Static floor-map data (background image, desks, rooms, utilities, neighbourhoods) — see booking.getFloorAvailability for live desk state. */
   get: orgProcedure.input(z.object({ floorId: z.string().min(1) })).query(async ({ ctx, input }) => {
     const floor = await ctx.db.floor.findUnique({
       where: { id: input.floorId },
@@ -37,6 +37,14 @@ export const floorRouter = createTRPCRouter({
         desks: { where: { archivedAt: null }, orderBy: { number: "asc" } },
         rooms: true,
         utilities: true,
+        neighbourhoods: {
+          include: {
+            desks: { select: { deskId: true } },
+            members: { select: { userId: true } },
+            rules: { orderBy: { sortOrder: "asc" } },
+          },
+          orderBy: { name: "asc" },
+        },
       },
     });
     if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });

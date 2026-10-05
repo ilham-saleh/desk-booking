@@ -32,7 +32,7 @@ export function SitePermissionsSection({ user, onChanged }: { user: UserDetail; 
           <CardTitle>Associated Site / Floor Permissions</CardTitle>
         </CardHeader>
         <CardContent>
-          <p role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950">
+          <p role="status" className="rounded-md border border-light-blue bg-navy-soft p-3 text-sm text-navy">
             System Administrators have access to all sites and floors. No site selection is needed for {firstName}.
           </p>
         </CardContent>
@@ -139,7 +139,7 @@ function ScopedPermissions({
         </CardHeader>
         <CardContent>
           {user.permissions.length === 0 ? (
-            <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[#f5d2b3] bg-warning-soft p-3 text-sm text-[#6b3608]">
               <span>{emptyMessage}</span>
               {user.availableSites.length > 0 && (
                 <Button size="sm" className="gap-1" onClick={focusAvailable}>
@@ -165,7 +165,7 @@ function ScopedPermissions({
                     <TableCell className="font-medium">{permission.siteName}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">{permission.city ?? "—"}</TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" className="text-red-700 hover:text-red-800" onClick={() => setPendingRemove({ siteId: permission.siteId, siteName: permission.siteName })}>
+                      <Button variant="outline" size="sm" className="text-danger hover:text-danger" onClick={() => setPendingRemove({ siteId: permission.siteId, siteName: permission.siteName })}>
                         Remove
                       </Button>
                     </TableCell>

@@ -5,7 +5,8 @@ import Credentials from "next-auth/providers/credentials";
 
 import { env } from "@/lib/env";
 import { edgeAuthConfig } from "@/server/auth/edge-config";
-import { resolveDevCredentials, resolveEntraSignIn, resolveGoogleSignIn } from "@/server/auth/resolve-org";
+import { fetchGraphProfile, toEntraProfile } from "@/server/auth/entra-profile";
+import { resolveDevCredentials, resolveEntraSignIn } from "@/server/auth/resolve-org";
 
 const DEV_CREDENTIALS_PROVIDER_ID = "dev-credentials";
 
@@ -40,20 +41,15 @@ export const authConfig: NextAuthConfig = {
       // Already resolved (and rejected, if unknown) inside authorize() above.
       if (account?.provider === DEV_CREDENTIALS_PROVIDER_ID) return true;
 
-      const email = user.email;
-      if (!email) return false;
-
-      if (account?.provider === "google") {
-        const identity = await resolveGoogleSignIn(email);
-        if (!identity) return false;
-        Object.assign(user, identity);
-        return true;
-      }
-
-      if (account?.provider === "microsoft-entra-id") {
-        const tenantId = typeof profile?.tid === "string" ? profile.tid : undefined;
-        const issuer = typeof profile?.iss === "string" ? profile.iss : undefined;
-        const identity = await resolveEntraSignIn(email, tenantId, issuer);
+      // Microsoft Entra ID is the only SSO provider: sign-in and first-sign-in provisioning.
+      if (account?.provider === "microsoft-entra-id" && profile) {
+        const graph = account.access_token ? await fetchGraphProfile(account.access_token) : null;
+        const entraProfile = toEntraProfile(profile, graph);
+        if (!entraProfile) {
+          console.warn("Entra sign-in rejected: token is missing oid, tid or email");
+          return false;
+        }
+        const identity = await resolveEntraSignIn(entraProfile);
         if (!identity) return false;
         Object.assign(user, identity);
         return true;

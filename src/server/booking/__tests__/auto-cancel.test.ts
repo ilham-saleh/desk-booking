@@ -20,7 +20,7 @@ const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: testData
 
 async function makeOrg(slug: string, name: string) {
   await db.organization.deleteMany({ where: { slug } });
-  const org = await db.organization.create({ data: { name, slug, ssoGoogleDomains: [] } });
+  const org = await db.organization.create({ data: { name, slug } });
   const site = await db.site.create({
     data: { organizationId: org.id, name: "Site", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },
   });

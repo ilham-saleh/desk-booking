@@ -1,25 +1,20 @@
 import type { NextAuthConfig } from "next-auth";
-import Google from "next-auth/providers/google";
 import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 
 import { env } from "@/lib/env";
 
 /**
- * Auth.js validates every configured provider's config on every request —
- * an OAuth app whose credentials haven't been registered yet (blank env
- * vars) fails that validation and 500s the *entire* auth() call, not just
- * sign-in attempts through that specific provider. So each provider is only
- * added once its required env vars are actually set.
+ * Microsoft Entra ID is the only SSO provider. Auth.js validates every
+ * configured provider's config on every request — an app registration whose
+ * credentials aren't set yet (blank env vars) fails that validation and 500s
+ * the *entire* auth() call — so the provider is only added once its required
+ * env vars are actually set.
  */
-export const googleEnabled = Boolean(env.AUTH_GOOGLE_ID && env.AUTH_GOOGLE_SECRET);
 export const entraEnabled = Boolean(
   env.AUTH_MICROSOFT_ENTRA_ID_ID && env.AUTH_MICROSOFT_ENTRA_ID_SECRET && env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
 );
 
 const edgeProviders: NextAuthConfig["providers"] = [];
-if (googleEnabled) {
-  edgeProviders.push(Google);
-}
 if (entraEnabled) {
   edgeProviders.push(MicrosoftEntraID);
 }
@@ -34,7 +29,8 @@ if (entraEnabled) {
  */
 export const edgeAuthConfig: NextAuthConfig = {
   session: { strategy: "jwt" },
-  pages: { signIn: "/sign-in" },
+  // Rejected sign-ins (signIn callback → false) land back on /sign-in?error=AccessDenied.
+  pages: { signIn: "/sign-in", error: "/sign-in" },
   providers: edgeProviders,
   callbacks: {
     jwt({ token, user }) {

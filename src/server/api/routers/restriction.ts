@@ -78,7 +78,7 @@ export const restrictionRouter = createTRPCRouter({
 
   /**
    * Department names for restriction rules and department blocks — exactly the
-   * departments that exist on employee records (HRIS-owned, as shown on the
+   * departments that exist on employee records (Entra-owned, as shown on the
    * Users page), so a rule can never target a department nobody belongs to.
    */
   listDepartmentOptions: orgProcedure.query(async ({ ctx }) => {

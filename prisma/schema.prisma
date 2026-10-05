@@ -109,7 +109,9 @@ model Organization {
   slug   String    @unique
   status OrgStatus @default(ACTIVE)
 
-  ssoGoogleDomains String[]
+  /// Microsoft Entra ID is the only SSO. A sign-in is accepted for this org
+  /// only when the token's `tid` equals ssoEntraTenantId (and, when set, its
+  /// `iss` equals ssoEntraIssuer).
   ssoEntraTenantId String?
   ssoEntraIssuer   String?
 
@@ -135,27 +137,31 @@ model Organization {
   deskRestrictionOccupants DeskRestrictionOccupant[]
   deskAttributes         DeskAttribute[]
   siteOperatingHours     SiteOperatingHours[]
+  neighbourhoods         Neighbourhood[]
 
   @@map("organizations")
 }
 
-/// Employee identity/profile fields (email, names, title, department, location,
-/// employeeId, phone) are HRIS-owned and will be updated by the HRIS sync in a
-/// later phase. role, isActive and the Permission rows are application-owned
-/// and must never be touched by a sync.
+/// Created on the employee's first Microsoft Entra sign-in and refreshed on each
+/// later one (src/server/auth/resolve-org.ts). Identity/profile fields (email,
+/// names, title, department, location, employeeId, phone) are Entra-owned.
+/// role, isActive, timezone and the Permission rows are application-owned and
+/// must never be overwritten by a sign-in.
 model User {
   id             String   @id @default(cuid())
   organizationId String? // null only for PLATFORM_ADMIN
   email          String
-  /// Display name — kept in sync with firstName + lastName on save.
+  /// Entra `oid` claim — the stable match key, preferred over email.
+  entraObjectId  String?
+  /// Display name from Entra (falls back to firstName + lastName).
   name           String
   firstName      String?
   lastName       String?
-  /// Stable HRIS identifier — preferred match key for the upcoming sync.
+  /// Entra `employeeId` attribute, when the tenant sets it.
   employeeId     String?
   title          String?
   department     String?
-  /// HRIS office/location label. Not a site permission — see Permission.
+  /// Entra office location label. Not a site permission — see Permission.
   location       String?
   phone          String?
   timezone       String?
@@ -178,8 +184,10 @@ model User {
   createdFloorPlanVersions FloorPlanVersion[]
   assignedDesks            Desk[]             @relation("AssignedOccupant")
   deskRestrictionOccupants DeskRestrictionOccupant[]
+  neighbourhoodMemberships NeighbourhoodMember[]
 
   @@unique([organizationId, email])
+  @@unique([organizationId, entraObjectId])
   @@unique([organizationId, employeeId])
   @@index([organizationId, role])
   @@index([organizationId, isActive])
@@ -254,6 +262,7 @@ model Floor {
   desks           Desk[]
   rooms           Room[]
   utilities       Utility[]
+  neighbourhoods  Neighbourhood[]
 
   @@map("floors")
 }
@@ -314,6 +323,7 @@ model Desk {
   deskWatches        DeskWatch[]
   restrictionAssignments DeskRestrictionAssignment[]
   attributes         DeskAttribute[]
+  neighbourhoods     NeighbourhoodDesk[]
 
   @@unique([floorId, number])
   @@index([floorId, archivedAt])
@@ -526,7 +536,7 @@ model DeskRestrictionAssignment {
   deskId                   String
   restrictionMode          DeskRestrictionMode @default(ANYONE)
   restrictionId            String? // required when restrictionMode = CUSTOM
-  /// Department names admitted when restrictionMode = DEPARTMENT (HRIS-owned strings on User.department).
+  /// Department names admitted when restrictionMode = DEPARTMENT (Entra-owned strings on User.department).
   departmentNames          String[]            @default([])
   shiftId                  String
   advanceBookingWindowDays Int? // null = site/system default
@@ -599,4 +609,77 @@ model SiteOperatingHours {
   @@index([organizationId])
   @@index([siteId])
   @@map("site_operating_hours")
+}
+
+/// Logical area/group of desks on a floor (e.g. Technology, Finance, Consulting).
+/// Neighbourhoods are used to visually organize desks and restrict booking by membership.
+model Neighbourhood {
+  id             String   @id @default(cuid())
+  organizationId String
+  floorId        String
+  name           String
+  color          String
+  description    String?
+  imageUrl       String?
+  captain        String? // captain user ID
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  floor        Floor             @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  desks        NeighbourhoodDesk[]
+  members      NeighbourhoodMember[]
+  rules        NeighbourhoodRule[]
+
+  @@unique([floorId, name])
+  @@index([organizationId])
+  @@index([floorId])
+  @@map("neighbourhoods")
+}
+
+/// Link desk to neighbourhood (many-to-one).
+model NeighbourhoodDesk {
+  id               String   @id @default(cuid())
+  neighbourhoodId  String
+  deskId           String
+  createdAt        DateTime @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+  desk          Desk          @relation(fields: [deskId], references: [id], onDelete: Cascade)
+
+  @@unique([neighbourhoodId, deskId])
+  @@index([deskId])
+  @@map("neighbourhood_desks")
+}
+
+/// Employee membership in a neighbourhood (manual assignment).
+model NeighbourhoodMember {
+  id               String   @id @default(cuid())
+  neighbourhoodId  String
+  userId           String
+  createdAt        DateTime @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([neighbourhoodId, userId])
+  @@index([userId])
+  @@map("neighbourhood_members")
+}
+
+/// Rule for auto-matching neighbourhood members (e.g., "Department = Technology").
+model NeighbourhoodRule {
+  id               String                @id @default(cuid())
+  neighbourhoodId  String
+  fieldType        RestrictionFieldType
+  operator         RestrictionOperator
+  value            Json // array of strings (empty for IS_EMPTY / IS_NOT_EMPTY)
+  connector        RuleConnector         @default(OR)
+  sortOrder        Int                   @default(0)
+  createdAt        DateTime              @default(now())
+
+  neighbourhood Neighbourhood @relation(fields: [neighbourhoodId], references: [id], onDelete: Cascade)
+
+  @@index([neighbourhoodId])
+  @@map("neighbourhood_rules")
 }

@@ -16,10 +16,10 @@ export default function AdminBookingsPage() {
   const { data: sites = [] } = api.facility.list.useQuery();
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div>
-        <h1 className="text-3xl font-bold">Booking Management</h1>
-        <p className="mt-2 text-gray-600">View and manage all bookings across your facilities.</p>
+        <h1 className="type-page-title">Booking Management</h1>
+        <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">View and manage all bookings across your facilities.</p>
       </div>
 
       {/* Filters */}
@@ -70,7 +70,7 @@ export default function AdminBookingsPage() {
           <CardDescription>Manage bookings across all facilities</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="text-sm text-gray-500 text-center py-8">
+          <div className="text-sm text-muted-foreground text-center py-8">
             <div className="flex items-center justify-center gap-2">
               <Search className="size-4" />
               <span>Booking admin view ready to integrate with real booking data</span>

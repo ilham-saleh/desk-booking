@@ -2,7 +2,6 @@
 
 import { api } from "@/lib/trpc/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
@@ -29,39 +28,37 @@ export function PublishControls({ floorId, draftVersionId, onPublishSuccess }: P
   const hasArchivedVersions = versions?.some((v) => v.status === "ARCHIVED");
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Floor Plan Status</CardTitle>
-        <CardDescription>Manage floor plan versions</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Current Status:</span>
-          <div className="flex gap-2">
-            <Badge variant="outline">Draft</Badge>
-            {hasLiveVersion && <Badge variant="secondary">Live Published</Badge>}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Button
-            onClick={() => publishFloor.mutate({ floorId })}
-            disabled={!draftVersionId || publishFloor.isPending}
-            className="w-full"
-          >
-            {publishFloor.isPending ? "Publishing..." : "Publish to Live"}
-          </Button>
-
-          {hasArchivedVersions && (
-            <div className="border-t pt-4">
-              <p className="text-sm text-gray-600 mb-2">Version history available</p>
-              <Button variant="outline" disabled size="sm" className="w-full">
-                View Previous Versions (coming soon)
-              </Button>
-            </div>
+    <section className="flex flex-col gap-4 rounded-2xl border p-4" aria-labelledby="floor-plan-status-heading">
+      <div>
+        <h3 id="floor-plan-status-heading" className="type-card-title">
+          Publishing
+        </h3>
+        <p className="type-helper">Employees see the live version on the Floor Map.</p>
+      </div>
+      <div className="bg-surface-muted flex items-center justify-between rounded-xl px-3 py-2.5">
+        <span className="text-text-secondary text-sm font-medium">Current status</span>
+        <div className="flex gap-1.5">
+          <Badge variant="outline">Draft</Badge>
+          {hasLiveVersion && (
+            <Badge variant="success" dot>
+              Live
+            </Badge>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+
+      <Button variant="brand" onClick={() => publishFloor.mutate({ floorId })} disabled={!draftVersionId || publishFloor.isPending} className="w-full">
+        {publishFloor.isPending ? "Publishing…" : "Publish to live"}
+      </Button>
+
+      {hasArchivedVersions && (
+        <div className="space-y-2 border-t pt-3">
+          <p className="type-helper">Version history available</p>
+          <Button variant="outline" disabled size="sm" className="w-full">
+            View previous versions (coming soon)
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }

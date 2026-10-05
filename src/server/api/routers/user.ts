@@ -27,9 +27,9 @@ import type { ScopedDb } from "@/server/tenancy";
 /**
  * Users administration (tasks/users-management.md) plus the small directory
  * lookups the booking flows need. Profile fields (names, email, title,
- * department, location) are HRIS-owned; role, isActive and Permission rows are
- * application-owned. Nothing here touches title/department — the HRIS sync
- * will own them next phase.
+ * department, location, employee ID, phone) are Entra-owned and refresh on
+ * each sign-in (src/server/auth/resolve-org.ts), so nothing here writes them;
+ * role, isActive and Permission rows are application-owned.
  */
 
 const permissionWithSite = { include: { site: { select: { id: true, name: true, city: true } } }, orderBy: { site: { name: "asc" as const } } };
@@ -239,30 +239,24 @@ export const userRouter = createTRPCRouter({
   }),
 
   /**
-   * Save User: profile fields + role. A role change removes Permission rows the
+   * Save User: the application role. A role change removes Permission rows the
    * new role can't use, so a demoted Facility Admin keeps no hidden site access
    * and a promoted Booking Manager gains no site until an admin assigns it.
    */
   save: siteAdminProcedure.input(userSaveInputSchema).mutation(async ({ ctx, input }) => {
     const { user } = await loadManagedUser(ctx, input.userId);
 
-    const roleChanged = input.role !== user.role;
-    if (roleChanged) {
-      if (user.id === ctx.session.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "You can't change your own role." });
-      }
-      if (!canAssignRole(ctx.session, input.role) || !canAssignRole(ctx.session, user.role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: `You don't have permission to assign the ${roleLabel(input.role)} role.` });
-      }
-    }
+    if (input.role === user.role) return { ...toDirectoryRow(user), removedPermissionCount: 0 };
 
-    if (input.email !== user.email) {
-      const clash = await ctx.db.user.findFirst({ where: { email: input.email, id: { not: user.id } }, select: { id: true } });
-      if (clash) throw new TRPCError({ code: "CONFLICT", message: `Another user already uses ${input.email}.` });
+    if (user.id === ctx.session.user.id) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "You can't change your own role." });
+    }
+    if (!canAssignRole(ctx.session, input.role) || !canAssignRole(ctx.session, user.role)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: `You don't have permission to assign the ${roleLabel(input.role)} role.` });
     }
 
     const keepType = permissionTypeForRole(input.role);
-    const removedPermissions = roleChanged ? user.permissions.filter((permission) => permission.type !== keepType) : [];
+    const removedPermissions = user.permissions.filter((permission) => permission.type !== keepType);
 
     const updated = await ctx.db.$transaction(async (tx) => {
       if (removedPermissions.length > 0) {
@@ -270,14 +264,7 @@ export const userRouter = createTRPCRouter({
       }
       return tx.user.update({
         where: { id: user.id },
-        data: {
-          firstName: input.firstName,
-          lastName: input.lastName,
-          name: `${input.firstName} ${input.lastName}`.trim(),
-          email: input.email,
-          location: input.location,
-          role: input.role,
-        },
+        data: { role: input.role },
         include: { permissions: permissionWithSite },
       });
     });
@@ -286,10 +273,10 @@ export const userRouter = createTRPCRouter({
       ctx.db,
       ctx.organizationId,
       ctx.session.user.id,
-      roleChanged ? "user.roleChanged" : "user.profileUpdated",
+      "user.roleChanged",
       user.id,
-      { name: user.name, email: user.email, location: user.location, role: user.role, removedSitePermissions: removedPermissions.map((permission) => ({ siteId: permission.siteId, type: permission.type })) },
-      { name: updated.name, email: updated.email, location: updated.location, role: updated.role },
+      { role: user.role, removedSitePermissions: removedPermissions.map((permission) => ({ siteId: permission.siteId, type: permission.type })) },
+      { role: updated.role },
     );
 
     return { ...toDirectoryRow(updated), removedPermissionCount: removedPermissions.length };

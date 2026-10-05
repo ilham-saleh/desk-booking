@@ -15,11 +15,9 @@ Read these files before changing code:
 
 This task is ONLY about the Users administration experience.
 
-Do NOT implement HRIS synchronization yet.
+There is no HRIS integration. Employees are created on their first Microsoft Entra ID sign-in and their profile fields refresh from Entra on each sign-in (see `PROJECT_SPECS.md` §5–6 and `src/server/auth/resolve-org.ts`).
 
-HRIS/user-data import will be handled in the next phase.
-
-For now, build the Users management architecture and UI using the existing User data/model so that it is ready for HRIS-synced employees later.
+Build the Users management architecture and UI on that Entra-sourced User data.
 
 Do not rebuild unrelated functionality.
 
@@ -44,12 +42,12 @@ Users
 → select/delete users if required
 → click employee
 → User Details
-→ edit basic information
+→ view Entra profile information (read-only)
 → assign role
 → assign site permissions according to role
 → save
 
-The Users page should eventually display employees synchronized from HRIS, but HRIS sync is NOT part of this task.
+The Users page displays every employee who has signed in with Entra at least once.
 
 ---
 
@@ -117,22 +115,20 @@ Use database data.
 
 ---
 
-# 4. HRIS-OWNED FIELDS
+# 4. ENTRA-OWNED FIELDS
 
-The following fields will eventually come from HRIS:
+The following fields come from Microsoft Entra ID (ID token claims / Microsoft Graph `/me`) and refresh on each sign-in:
 
 - First Name
 - Last Name
 - Email
 - Title
 - Department
-- Location
-- Employee ID
-- other employee attributes
+- Location (Entra office location)
+- Employee ID (if set in Entra)
+- Phone (if set in Entra)
 
-Do not implement the HRIS import now.
-
-However, structure the Users page and User model usage so these fields can later be updated by HRIS without changing the permissions system.
+They are read-only in the Users area. A sign-in refresh never changes the permissions system.
 
 Application-owned data must remain separate:
 
@@ -330,7 +326,7 @@ Do not overload the Select Columns control with record filtering.
 
 # 11. PAGINATION
 
-The Users page should support pagination because the final HRIS employee list may contain hundreds or thousands of users.
+The Users page should support pagination because the employee directory may contain hundreds or thousands of users.
 
 Similar to the reference screenshot:
 
@@ -365,21 +361,13 @@ The page should contain:
 - Location
 - Role
 
-Fields coming from HRIS may eventually become read-only when HRIS sync is implemented.
+First Name, Last Name, Email, Title, Department and Location are Entra-owned and shown read-only. Entra is authoritative for them; change them in Entra and they update on the employee's next sign-in.
 
-For this phase, basic fields can remain editable as requested.
+The only editable field in Basic Information is:
 
-At minimum admin should be able to edit:
-
-- First Name
-- Last Name
-- Email
-- Location
 - Role
 
-Title and Department should also be displayed even if they are not yet editable.
-
-Later HRIS sync will become authoritative for those fields.
+The save API accepts only the role, so profile fields cannot be written from the client.
 
 ---
 
@@ -701,20 +689,18 @@ User Details should include:
 
 Location
 
-For now this may be a text/select field depending on current data.
+It shows the Entra office location, read-only.
 
 Example:
 
 Location:
 London
 
-Later HRIS sync may control this value.
-
 Do not confuse Location with application site permission.
 
 Example:
 
-Employee HRIS location:
+Employee Entra office location:
 London
 
 does not automatically mean:
@@ -733,25 +719,25 @@ Example:
 
 USER DETAILS
 
-Basic Information
+Basic Information (profile fields read-only, from Entra)
 
 First Name
-[ Alex ]
+Alex
 
 Last Name
-[ Hudson ]
+Hudson
 
 Email
-[ alex.hudson@company.com ]
+alex.hudson@company.com
 
 Title
-[ Associate ]
+Associate
 
 Department
-[ Consulting ]
+Consulting
 
 Location
-[ London ]
+London
 
 Role
 [ Booking Manager ▼ ]
@@ -942,11 +928,9 @@ If the user has multiple permissions, abbreviate gracefully and show full detail
 
 ---
 
-# 30. CURRENT PHASE VS NEXT HRIS PHASE
+# 30. ENTRA PROFILE DATA VS APPLICATION DATA
 
-Do NOT implement HRIS synchronization in this task.
-
-However, design this page with the expectation that next phase will sync:
+Each Entra sign-in refreshes:
 
 - Employee ID
 - First Name
@@ -956,11 +940,9 @@ However, design this page with the expectation that next phase will sync:
 - Department
 - Location
 
-from HRIS.
-
 Therefore:
 
-Do not tie role/permission data directly to imported spreadsheet values.
+Do not tie role/permission data to Entra profile values (an Entra department or title never grants a role).
 
 Keep:
 
@@ -970,7 +952,7 @@ separate from:
 
 Application role/permission data.
 
-This is important because HRIS updates must never accidentally reset:
+This is important because an Entra profile refresh must never accidentally reset:
 
 - System Admin role
 - Facility Admin permissions
@@ -1182,16 +1164,15 @@ only Booking Managers appear.
 
 ---
 
-## Test 5 — Edit user
+## Test 5 — Profile is read-only; role is editable
 
 Open employee.
 
-Change:
+Expected:
 
-First Name
-Last Name
-Email
-Location
+First Name, Last Name, Email, Title, Department and Location are shown read-only.
+
+Change Role.
 
 Save.
 
@@ -1199,7 +1180,9 @@ Refresh.
 
 Expected:
 
-changes persist.
+role change persists; profile fields are unchanged.
+
+A save request that also sends profile fields does not write them.
 
 ---
 
@@ -1348,7 +1331,7 @@ Users
 → Edit Users mode works
 → bulk user removal is safe
 → clicking employee opens details
-→ First Name / Last Name / Email / Location editable
+→ First Name / Last Name / Email / Title / Department / Location shown read-only (Entra-owned)
 → Role editable
 → SYSTEM_ADMIN has global access
 → FACILITY_ADMIN can be assigned site scope
@@ -1357,7 +1340,7 @@ Users
 → BOOKING_MANAGER cannot manage users/desks
 → STANDARD_USER has no admin access
 → all role/permission enforcement exists server-side
-→ page is ready for HRIS-synced employee data next phase
+→ Entra sign-in refresh leaves role and permissions unchanged
 
 Start by reading CLAUDE.md, PROJECT_SPECS.md and this task file.
 

@@ -12,30 +12,37 @@ export interface BookingStateInput {
   status: BookingStatus;
 }
 
-/**
- * A desk's map state (CLAUDE.md rule 14 / spec module D): INACTIVE overrides
- * everything; BOOKED means an active booking's range contains `now`;
- * SCHEDULED means an active booking exists later the same date; else
- * AVAILABLE. `bookingsForDate` should already be scoped to the one date
- * being viewed — this function doesn't filter by date itself.
- */
-export function computeDeskState(desk: DeskStateInput, bookingsForDate: BookingStateInput[], now: Date): DeskState {
-  if (!desk.isActive) return DeskState.INACTIVE;
-
-  const active = bookingsForDate.filter((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status));
-  if (active.some((booking) => booking.startAt <= now && now < booking.endAt)) return DeskState.BOOKED;
-  if (active.some((booking) => booking.startAt > now)) return DeskState.SCHEDULED;
-  return DeskState.AVAILABLE;
+/** A half-open [start, end) instant range the viewer is asking about. */
+export interface TimeWindow {
+  start: Date;
+  end: Date;
 }
 
-/** Whether a desk is free for an arbitrary requested [startAt, endAt) range — used by the "Book a Desk" flow. */
-export function isDeskFreeForRange(
-  bookingsForDate: BookingStateInput[],
-  requestedStart: Date,
-  requestedEnd: Date,
-): boolean {
-  return !bookingsForDate.some(
-    (booking) =>
-      ACTIVE_BOOKING_STATUSES.includes(booking.status) && booking.startAt < requestedEnd && requestedStart < booking.endAt,
+/**
+ * A desk's map state for a requested time window: INACTIVE overrides
+ * everything; BOOKED means an active booking overlaps the window; otherwise
+ * AVAILABLE. A booking only makes the desk busy for its own [startAt, endAt)
+ * — outside that range other people can still book the desk — so a booking
+ * for tomorrow never colours today's map, and a 09:00–10:00 booking leaves
+ * the desk available from 10:00 onwards.
+ *
+ * `DeskState.SCHEDULED` is no longer produced (it used to mark a desk as
+ * taken for the whole day as soon as any later booking existed). The enum
+ * value is kept so existing rows/clients need no migration.
+ */
+export function computeDeskState(desk: DeskStateInput, bookings: BookingStateInput[], window: TimeWindow): DeskState {
+  if (!desk.isActive) return DeskState.INACTIVE;
+  return isDeskFreeForRange(bookings, window.start, window.end) ? DeskState.AVAILABLE : DeskState.BOOKED;
+}
+
+/** Whether a desk is free for an arbitrary requested [startAt, endAt) range — shared by the map, "Book a Desk" and booking creation. */
+export function isDeskFreeForRange(bookings: BookingStateInput[], requestedStart: Date, requestedEnd: Date): boolean {
+  return !bookings.some((booking) => bookingOverlapsRange(booking, requestedStart, requestedEnd));
+}
+
+/** An active booking that occupies any part of [requestedStart, requestedEnd). */
+export function bookingOverlapsRange(booking: BookingStateInput, requestedStart: Date, requestedEnd: Date): boolean {
+  return (
+    ACTIVE_BOOKING_STATUSES.includes(booking.status) && booking.startAt < requestedEnd && requestedStart < booking.endAt
   );
 }

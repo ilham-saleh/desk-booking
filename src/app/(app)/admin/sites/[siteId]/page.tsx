@@ -45,15 +45,15 @@ export default function FacilityDetailPage() {
   const selectedFloor = floors.find((f) => f.id === selectedFloorId);
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="sm" onClick={() => router.back()}>
           <ArrowLeft className="size-4" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold">{facility.name}</h1>
-          <p className="mt-1 text-gray-600">
+          <h1 className="type-page-title">{facility.name}</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
             {facility.city}, {facility.country} • {facility.timeZone}
           </p>
         </div>
@@ -67,27 +67,27 @@ export default function FacilityDetailPage() {
         <CardContent>
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <dt className="font-medium text-gray-600">Address</dt>
+              <dt className="font-medium text-muted-foreground">Address</dt>
               <dd>{facility.address || "—"}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-600">Postal Code</dt>
+              <dt className="font-medium text-muted-foreground">Postal Code</dt>
               <dd>{facility.postalCode || "—"}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-600">Description</dt>
+              <dt className="font-medium text-muted-foreground">Description</dt>
               <dd className="col-span-2">{facility.description || "—"}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-600">Timezone</dt>
+              <dt className="font-medium text-muted-foreground">Timezone</dt>
               <dd>{facility.timeZone}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-600">Units</dt>
+              <dt className="font-medium text-muted-foreground">Units</dt>
               <dd>{facility.unitSystem}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-600">Show Coworker Bookings</dt>
+              <dt className="font-medium text-muted-foreground">Show Coworker Bookings</dt>
               <dd>{facility.allowEmployeeSeeBookings ? "Yes" : "No"}</dd>
             </div>
           </dl>
@@ -115,7 +115,7 @@ export default function FacilityDetailPage() {
         </CardHeader>
         <CardContent>
           {floors.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
+            <div className="text-center text-muted-foreground py-8">
               No floors yet. Create one to get started.
             </div>
           ) : (
@@ -124,7 +124,7 @@ export default function FacilityDetailPage() {
                 <div key={floor.id} className="flex items-center justify-between rounded border p-4">
                   <div>
                     <p className="font-medium">{floor.name}</p>
-                    <p className="text-sm text-gray-600">Floor {idx + 1}</p>
+                    <p className="text-sm text-muted-foreground">Floor {idx + 1}</p>
                   </div>
                   <div className="flex gap-2">
                     <Button

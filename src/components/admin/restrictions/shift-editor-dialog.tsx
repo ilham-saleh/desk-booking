@@ -103,7 +103,7 @@ function ShiftsPanel({ onCreated, onClose }: { onCreated?: (shift: { id: string;
             ))}
           </div>
           {duplicateOf && days.length > 0 && (
-            <p className="text-xs text-amber-800">
+            <p className="text-xs text-[#6b3608]">
               “{duplicateOf.name}” already covers exactly these days — you can reuse it instead of creating a duplicate.
             </p>
           )}
@@ -118,7 +118,7 @@ function ShiftsPanel({ onCreated, onClose }: { onCreated?: (shift: { id: string;
           </Button>
         </div>
         {error && (
-          <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-800">
+          <p role="alert" className="rounded-md border border-danger/25 bg-danger-soft p-2 text-sm text-danger">
             {error}
           </p>
         )}

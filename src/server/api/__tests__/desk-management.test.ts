@@ -73,8 +73,8 @@ describe("desk management", () => {
   beforeAll(async () => {
     await cleanup();
 
-    orgA = await db.organization.create({ data: { name: "Desk Mgmt A", slug: SLUGS[0]!, ssoGoogleDomains: [] } });
-    orgB = await db.organization.create({ data: { name: "Desk Mgmt B", slug: SLUGS[1]!, ssoGoogleDomains: [] } });
+    orgA = await db.organization.create({ data: { name: "Desk Mgmt A", slug: SLUGS[0]! } });
+    orgB = await db.organization.create({ data: { name: "Desk Mgmt B", slug: SLUGS[1]! } });
 
     siteA = await db.site.create({
       data: { organizationId: orgA.id, name: "London", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1140 },
@@ -328,6 +328,44 @@ describe("desk management", () => {
     const desk = availability.desks.find((d) => d.deskId === deskId)!;
     expect(desk.eligibleForViewer).toBe(false);
     expect(desk.eligibilityReason).toContain("Technology");
+  });
+
+  it("evaluates availability for the chosen occupant when booking on behalf, and refuses that for standard users", async () => {
+    const wednesday = nextDateFor(3);
+    // Desk 2.21 is Technology-only on Wednesdays: eligible for the engineer, not for the salesperson.
+    const forEngineer = await callerFor(superAdmin).booking.getFloorAvailability({ floorId: floorA.id, date: wednesday, occupantUserId: engineer.id });
+    expect(forEngineer.desks.find((d) => d.deskId === deskId)?.eligibleForViewer).toBe(true);
+    const forSales = await callerFor(superAdmin).booking.getFloorAvailability({ floorId: floorA.id, date: wednesday, occupantUserId: salesperson.id });
+    expect(forSales.desks.find((d) => d.deskId === deskId)?.eligibleForViewer).toBe(false);
+
+    await expect(
+      callerFor(salesperson).booking.getFloorAvailability({ floorId: floorA.id, date: wednesday, occupantUserId: engineer.id }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("keeps guests off desks that carry people-based restrictions, on any day", async () => {
+    const admin = callerFor(superAdmin);
+    // Monday is an "Anyone"-free day here (assigned-occupants block) — but the rule is desk-wide:
+    // a desk with any department/occupant/custom block is never available to a guest.
+    const monday = nextDateFor(1);
+    const check = await admin.desk.checkEligibility({ deskId, date: monday, forGuest: true });
+    expect(check.eligible).toBe(false);
+    expect(check.status).toBe("GUEST_NOT_ALLOWED");
+    expect(check.reason).toMatch(/can't be booked for a guest/);
+
+    await expect(admin.booking.create({ deskId, date: monday, startMinutes: 540, endMinutes: 600, guestName: "Visitor" })).rejects.toThrow(
+      /can't be booked for a guest/,
+    );
+
+    const availability = await admin.booking.getFloorAvailability({ floorId: floorA.id, date: monday, forGuest: true });
+    expect(availability.desks.find((d) => d.deskId === deskId)?.eligibleForViewer).toBe(false);
+
+    // An unrestricted desk on another floor is fine for a guest.
+    const unrestricted = await admin.booking.getFloorAvailability({ floorId: floorB.id, date: monday, forGuest: true });
+    expect(unrestricted.desks.find((d) => d.deskId === deskB.id)?.eligibleForViewer).toBe(true);
+
+    // Standard users can't ask on behalf of a guest at all.
+    await expect(callerFor(salesperson).desk.checkEligibility({ deskId, date: monday, forGuest: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   // ----- Restriction lifecycle -----

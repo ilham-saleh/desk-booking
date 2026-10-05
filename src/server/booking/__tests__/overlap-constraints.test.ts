@@ -46,7 +46,7 @@ describe("booking overlap exclusion constraints", () => {
     await db.user.deleteMany();
     await db.organization.deleteMany({ where: { slug: "overlap-constraint-test" } });
 
-    org = await db.organization.create({ data: { name: "Overlap Test", slug: "overlap-constraint-test", ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "Overlap Test", slug: "overlap-constraint-test" } });
     const site = await db.site.create({ data: { organizationId: org.id, name: "Site", timeZone: "UTC" } });
     const floor = await db.floor.create({ data: { organizationId: org.id, siteId: site.id, name: "Floor", sortOrder: 0 } });
     deskX = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: "X", x: 0, y: 0 } });

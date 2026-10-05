@@ -180,54 +180,55 @@ Resolve permissions from the authenticated session and database.
 
 # 8. Authentication
 
-Desired authentication:
+Microsoft Entra ID SSO is the only sign-in and sign-up method.
 
-1. Microsoft Entra ID as primary SSO
-2. Company email/password for pre-provisioned employees
+There is no HRIS integration and no email/password login.
 
 Important rules:
 
-- company-isolated access
-- no public signup
-- user should already exist in employee directory
-- map Entra identity to internal User
-- disabled users cannot authenticate
+- company-isolated access: only the configured Entra tenant
+- sign-up = first successful Entra sign-in, which creates the internal User
+- new users get `STANDARD_USER` and no admin permissions
+- map the Entra object ID to the internal User
+- disabled/inactive users cannot authenticate, and signing in again never reactivates them
 - application roles remain app-managed
 - Entra authentication does not imply admin access
 
-If authentication is not yet fully implemented, do not fake it. Add it incrementally and keep development access explicit.
+If authentication is not yet fully implemented, do not fake it. Add it incrementally and keep development access explicit (dev-only sign-in must stay disabled in production).
 
 ---
 
-# 9. HRIS Data Ownership
+# 9. Employee Data Ownership
 
-Employee data is synced from HRIS exports/data sheets.
+Employee profile data comes from Microsoft Entra ID (token claims and/or Microsoft Graph) and refreshes on each sign-in.
 
-HRIS-owned fields may include:
+Entra-owned fields may include:
 
-- employee ID
+- Entra object ID
 - name
 - work email
 - department
 - title
 - phone
-- manager
-- office/location
-- employment status
+- office location
+- employee ID (if set in Entra)
 
 Application-owned fields include:
 
 - role
+- active/no-access state
 - site permissions
 - floor permissions
 - delegation settings
 - application preferences
 
-A sync must not overwrite app-owned permissions.
+A sign-in profile refresh must not overwrite app-owned fields.
 
-Prefer stable employee ID over email for matching.
+Match users by Entra object ID first, then verified work email.
 
-Never create duplicate employees because their work email changed when a stable HRIS ID exists.
+Never create duplicate users because their work email changed when the Entra object ID already matches.
+
+Users appear in the directory only after their first sign-in.
 
 ---
 
@@ -586,7 +587,7 @@ Use one combined Users area.
 
 The Users area should combine:
 
-- HRIS employee data (columns such as name, email, title, department, location and additionally role and permission data columns which are created in the app by admin not from HRIS)
+- Entra employee data (columns such as name, email, title, department, location and additionally role and permission data columns which are created in the app by admin, not from Entra)
 - search/filter
 - employee detail
 - application role
@@ -595,7 +596,7 @@ The Users area should combine:
 - booking context
 - last login/activity
 
-HRIS-owned fields should generally be read-only in normal admin editing.
+Entra-owned fields should be read-only in normal admin editing.
 
 ---
 
@@ -726,7 +727,9 @@ Critical domain tests should cover:
 - ineligible department rejected
 - Booking Manager validation uses occupant
 - standard user cannot cancel another user's booking
-- HRIS sync preserves app role/permissions
+- first Entra sign-in creates one STANDARD_USER
+- Entra profile refresh preserves app role/permissions
+- other-tenant or deactivated user sign-in rejected
 
 ---
 
@@ -774,7 +777,7 @@ Handle:
 - deleted/inactive desk
 - stale edit
 - restriction deleted while assigned
-- malformed HRIS row
+- missing/malformed Entra profile claims
 - unauthorized mutation
 - booking collision
 - timezone conversion failure
@@ -835,25 +838,21 @@ Do not log passwords, tokens or full authentication secrets.
 
 ---
 
-# 36. HRIS Import Safety
+# 36. Sign-up Provisioning Safety
 
-HRIS import must not be an unrestricted file-to-database overwrite.
-
-Use:
+First-sign-in provisioning must be safe and idempotent:
 
 ```text
-parse
-→ validate
-→ preview/diff
-→ apply
-→ report
+validate tenant/token
+→ match by Entra object ID, then email
+→ reject if matched user is inactive
+→ create (STANDARD_USER) or refresh Entra-owned fields
+→ record last login
 ```
 
-Log import summary.
+Concurrent first sign-ins must not create duplicate users (rely on unique constraints).
 
-Do not silently remove users.
-
-A user disappearing from one partial spreadsheet must not automatically be deleted.
+Do not delete users. A user missing from Entra is disabled/inactive, not removed.
 
 ---
 
@@ -863,8 +862,8 @@ When implementing Entra:
 
 - tenant ID must be configured server-side
 - validate issuer/audience
-- map stable Entra object ID when available
-- verify employee exists/allowed
+- map stable Entra object ID
+- reject accounts outside the configured tenant, including personal Microsoft accounts
 - do not derive application admin role from arbitrary Entra claims unless explicitly configured
 - keep logout/session expiry correct
 

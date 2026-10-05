@@ -42,7 +42,7 @@ describe("booking.endBooking", () => {
   beforeAll(async () => {
     await db.organization.deleteMany({ where: { slug: "end-booking-test" } });
 
-    org = await db.organization.create({ data: { name: "End Booking Test", slug: "end-booking-test", ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "End Booking Test", slug: "end-booking-test" } });
     site = await db.site.create({
       data: { organizationId: org.id, name: "Site", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },
     });
@@ -91,11 +91,64 @@ describe("booking.endBooking", () => {
     expect(availability.desks.find((d) => d.deskId === desk.id)?.state).toBe("AVAILABLE");
   });
 
-  it("rejects ending a booking that was never checked in", async () => {
+  it("rejects ending a confirmed booking that hasn't started yet", async () => {
     const desk = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: "E2", x: 1, y: 1, requiresCheckIn: true } });
     const booking = await callerFor(user).booking.create({ deskId: desk.id, date: futureWeekday, startMinutes: 660, endMinutes: 720 });
 
-    await expect(callerFor(user).booking.endBooking({ bookingId: booking.id })).rejects.toThrow(/checked-in booking/i);
+    await expect(callerFor(user).booking.endBooking({ bookingId: booking.id })).rejects.toThrow(/hasn't started yet/i);
+  });
+
+  async function createInProgressBooking(deskNumber: string, occupant: SessionUser) {
+    const desk = await db.desk.create({ data: { organizationId: org.id, floorId: floor.id, number: deskNumber, x: 5, y: 5 } });
+    const booking = await db.booking.create({
+      data: {
+        organizationId: org.id,
+        deskId: desk.id,
+        userId: occupant.id,
+        bookedById: occupant.id,
+        date: new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z"),
+        startAt: new Date(Date.now() - 60 * 60 * 1000),
+        endAt: new Date(Date.now() + 60 * 60 * 1000),
+        status: "CONFIRMED",
+      },
+    });
+    return { desk, booking };
+  }
+
+  it("lets the owner end a confirmed booking that is in progress", async () => {
+    const { booking } = await createInProgressBooking("E5", user);
+    const completed = await callerFor(user).booking.endBooking({ bookingId: booking.id });
+    expect(completed.status).toBe("COMPLETED");
+  });
+
+  it("lets a site admin end another user's in-progress booking, freeing the desk right now", async () => {
+    const { desk, booking } = await createInProgressBooking("E6", user);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const completed = await callerFor(siteAdmin).booking.endBooking({ bookingId: booking.id });
+    expect(completed.status).toBe("COMPLETED");
+
+    const availability = await callerFor(otherUser).booking.getFloorAvailability({ floorId: floor.id, date: today });
+    expect(availability.desks.find((d) => d.deskId === desk.id)?.state).toBe("AVAILABLE");
+
+    const audit = await db.auditLog.findFirst({ where: { targetId: booking.id, action: "booking.endEarly" } });
+    expect(audit?.actorId).toBe(siteAdmin.id);
+  });
+
+  it("forbids a standard user from ending another user's in-progress booking", async () => {
+    const { booking } = await createInProgressBooking("E7", user);
+    await expect(callerFor(otherUser).booking.endBooking({ bookingId: booking.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await db.booking.findUnique({ where: { id: booking.id } }))?.status).toBe("CONFIRMED");
+  });
+
+  it("forbids a facility admin of a different site from ending the booking", async () => {
+    const outsiderRow = await db.user.create({
+      data: { organizationId: org.id, email: "other-site-admin@end-booking.test", name: "Other Site Admin", role: Role.SITE_ADMIN },
+    });
+    const outsider = { id: outsiderRow.id, name: outsiderRow.name, email: outsiderRow.email, role: outsiderRow.role, organizationId: org.id };
+    // otherUser as occupant: `user` still holds the (untouched) in-progress booking from the previous test.
+    const { booking } = await createInProgressBooking("E8", otherUser);
+    await expect(callerFor(outsider).booking.endBooking({ bookingId: booking.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("forbids a non-owner without admin role from ending a booking", async () => {

@@ -2,15 +2,21 @@ import { TRPCError } from "@trpc/server";
 
 import type { EndBookingInput } from "@/lib/schemas/booking";
 import { BookingStatus } from "@/generated/prisma/enums";
-import { isSiteAdminRole, type Session } from "@/server/auth/roles";
-import { assertSiteAdmin } from "@/server/api/trpc";
+import type { Session } from "@/server/auth/roles";
+import { assertCanManageBooking } from "@/server/auth/authorization";
 import type { ScopedDb } from "@/server/tenancy";
 
 /**
- * Releases a checked-in desk before its scheduled end time. `endAt` is left
- * as originally booked (a historical record) — COMPLETED already falls
- * outside ACTIVE_BOOKING_STATUSES, so the desk frees immediately regardless.
- * Audited (CLAUDE.md rule 13).
+ * Releases a desk before the booking's scheduled end time: either a
+ * checked-in booking (any time after check-in) or a confirmed booking that is
+ * already in progress. A booking that hasn't started is cancelled instead
+ * (`cancelBooking`). Allowed for the owner, or for an admin managing the
+ * desk's site — e.g. a Facility Admin ending another employee's booking so
+ * the desk frees up.
+ *
+ * `endAt` is left as originally booked (a historical record) — COMPLETED
+ * already falls outside ACTIVE_BOOKING_STATUSES, so the desk frees
+ * immediately regardless. Audited (CLAUDE.md rule 13), recording the actor.
  */
 export async function endBookingEarly(
   ctx: { db: ScopedDb; session: Session; organizationId: string },
@@ -25,16 +31,21 @@ export async function endBookingEarly(
   }
 
   const actorId = ctx.session.user.id;
-  const isOwner = booking.userId === actorId || booking.bookedById === actorId;
-  if (!isOwner) {
-    if (!isSiteAdminRole(ctx.session)) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "You can only end your own bookings." });
-    }
-    await assertSiteAdmin(ctx, booking.desk.floor.siteId);
-  }
+  await assertCanManageBooking(ctx, booking, booking.desk.floor.siteId, "end");
 
-  if (booking.status !== BookingStatus.CHECKED_IN) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Only a checked-in booking can be ended early." });
+  const now = Date.now();
+  const inProgress = booking.startAt.getTime() <= now && now < booking.endAt.getTime();
+  if (booking.status === BookingStatus.CONFIRMED && !inProgress) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message:
+        booking.startAt.getTime() > now
+          ? "This booking hasn't started yet — cancel it instead."
+          : "This booking has already ended.",
+    });
+  }
+  if (booking.status !== BookingStatus.CONFIRMED && booking.status !== BookingStatus.CHECKED_IN) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "This booking is already cancelled or completed." });
   }
 
   const completed = await ctx.db.booking.update({
@@ -49,8 +60,8 @@ export async function endBookingEarly(
       action: "booking.endEarly",
       targetType: "Booking",
       targetId: booking.id,
-      before: { status: booking.status },
-      after: { status: BookingStatus.COMPLETED },
+      before: { status: booking.status, userId: booking.userId, bookedById: booking.bookedById },
+      after: { status: BookingStatus.COMPLETED, endedByOwner: booking.userId === actorId || booking.bookedById === actorId },
     },
   });
 

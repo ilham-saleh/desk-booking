@@ -65,7 +65,7 @@ export function DesksList({ floorId, planWidth, planHeight, onDesksChange }: Des
                 </TableRow>
               )}
               {desks?.map((desk) => (
-                <TableRow key={desk.id} className="hover:bg-gray-50">
+                <TableRow key={desk.id} className="hover:bg-surface-muted">
                   <TableCell className="font-medium">{desk.number}</TableCell>
                   <TableCell className="text-sm">
                     {desk.restrictionAssignments.length === 0 ? (
@@ -84,7 +84,7 @@ export function DesksList({ floorId, planWidth, planHeight, onDesksChange }: Des
                     <Badge variant={desk.isActive ? "default" : "secondary"}>{desk.isActive ? "Active" : "Inactive"}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Button onClick={() => setEditingDeskId(desk.id)} variant="ghost" size="sm" className="text-blue-600 hover:text-blue-700">
+                    <Button onClick={() => setEditingDeskId(desk.id)} variant="ghost" size="sm" className="text-navy hover:text-navy">
                       Edit
                     </Button>
                   </TableCell>

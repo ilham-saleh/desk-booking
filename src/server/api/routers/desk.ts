@@ -81,7 +81,17 @@ export const deskRouter = createTRPCRouter({
    * user tries. Standard users may only ask about themselves.
    */
   checkEligibility: orgProcedure
-    .input(z.object({ deskId: z.string().min(1), date: dateStringSchema, occupantUserId: z.string().min(1).optional() }))
+    .input(
+      z
+        .object({
+          deskId: z.string().min(1),
+          date: dateStringSchema,
+          occupantUserId: z.string().min(1).optional(),
+          /** Evaluate for a guest (no employee record) — admin/booking-manager only, like guest bookings themselves. */
+          forGuest: z.boolean().optional(),
+        })
+        .refine((input) => !(input.forGuest && input.occupantUserId), { message: "Choose a user or a guest, not both" }),
+    )
     .query(async ({ ctx, input }) => {
       const desk = await ctx.db.desk.findFirst({
         where: { id: input.deskId, archivedAt: null },
@@ -90,16 +100,23 @@ export const deskRouter = createTRPCRouter({
       if (!desk) throw new TRPCError({ code: "NOT_FOUND", message: "Desk not found." });
 
       // Same rule as booking.create: only someone allowed to book for this
-      // occupant at this site may ask about their eligibility.
-      const occupantId = input.occupantUserId ?? ctx.session.user.id;
-      if (!(await canBookForUser(ctx, occupantId, desk.floor.site.id))) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "You can only check eligibility for yourself." });
+      // occupant (or a guest) at this site may ask about their eligibility.
+      let occupant: { id: string; email: string; department: string | null } | null = null;
+      if (input.forGuest) {
+        if (!(await canBookForUser(ctx, null, desk.floor.site.id))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `You don't have permission to book for guests at ${desk.floor.site.name}.` });
+        }
+      } else {
+        const occupantId = input.occupantUserId ?? ctx.session.user.id;
+        if (!(await canBookForUser(ctx, occupantId, desk.floor.site.id))) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "You can only check eligibility for yourself." });
+        }
+        occupant = await ctx.db.user.findFirst({
+          where: { id: occupantId },
+          select: { id: true, email: true, department: true },
+        });
+        if (!occupant) throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
       }
-      const occupant = await ctx.db.user.findFirst({
-        where: { id: occupantId },
-        select: { id: true, email: true, department: true },
-      });
-      if (!occupant) throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
 
       const result = evaluateDeskEligibility({
         desk,

@@ -44,11 +44,11 @@ export default function RestrictionsPage() {
   });
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Booking Restrictions</h1>
-          <p className="mt-2 text-gray-600">Reusable rule sets that desk restriction blocks assign to specific days.</p>
+          <h1 className="type-page-title">Booking Restrictions</h1>
+          <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">Reusable rule sets that desk restriction blocks assign to specific days.</p>
         </div>
         <Button onClick={() => setEditing(null)} className="gap-2">
           <PlusCircle className="size-4" />
@@ -66,7 +66,7 @@ export default function RestrictionsPage() {
           {isPending ? (
             <p className="text-muted-foreground py-8 text-center">Loading…</p>
           ) : filtered.length === 0 ? (
-            <div className="py-8 text-center text-gray-500">{query ? "No restrictions match your search." : "No restrictions yet. Create one to control desk booking access."}</div>
+            <div className="py-8 text-center text-muted-foreground">{query ? "No restrictions match your search." : "No restrictions yet. Create one to control desk booking access."}</div>
           ) : (
             <ul className="space-y-3">
               {filtered.map((restriction) => (
@@ -74,7 +74,7 @@ export default function RestrictionsPage() {
                   <Swatch color={restriction.color ?? "#9ca3af"} className="mt-1.5 size-3" />
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">{restriction.name}</p>
-                    <p className="text-sm text-gray-600">{describeRules(restriction.rules, { resolveUser, maxValues: 12 })}</p>
+                    <p className="text-sm text-muted-foreground">{describeRules(restriction.rules, { resolveUser, maxValues: 12 })}</p>
                     <p className="text-muted-foreground mt-0.5 text-xs">
                       {restriction.deskCount === 0 ? "Not assigned to any desk" : `Assigned to ${restriction.deskCount} desk(s) on ${restriction.floorCount} floor(s)`}
                     </p>

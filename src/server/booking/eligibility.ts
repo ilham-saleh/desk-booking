@@ -76,7 +76,8 @@ export type EligibilityStatus =
   | "DEPARTMENT_MISMATCH"
   | "RESTRICTION_MISMATCH"
   | "RESTRICTION_UNAVAILABLE"
-  | "OUTSIDE_ADVANCE_WINDOW";
+  | "OUTSIDE_ADVANCE_WINDOW"
+  | "GUEST_NOT_ALLOWED";
 
 export interface EligibilityResult {
   eligible: boolean;
@@ -106,6 +107,17 @@ export function evaluateDeskEligibility(input: EligibilityInput): EligibilityRes
 
   if (!desk.isActive || desk.archivedAt) {
     return fail("DESK_INACTIVE", `Desk ${desk.number} is inactive and can't be booked.`);
+  }
+
+  // Guests aren't in the employee directory, so they may only use desks that
+  // carry no people-based restriction at all (no department / assigned-occupant /
+  // custom block on any day, and not an assigned desk). Day-based "Anyone"
+  // shifts still apply below.
+  if (occupant === null && !isGuestBookable(desk)) {
+    return fail(
+      "GUEST_NOT_ALLOWED",
+      `Desk ${desk.number} has booking restrictions and can't be booked for a guest. Choose a desk without restrictions.`,
+    );
   }
 
   // No restriction blocks at all: the desk is open to anyone on any working day.
@@ -194,6 +206,11 @@ export function evaluateDeskEligibility(input: EligibilityInput): EligibilityRes
   }
 
   return { eligible: true, status: "ELIGIBLE", reason: null, assignment, dayOfWeek };
+}
+
+/** A desk a guest may be booked into: no assigned occupant and no restriction block other than "Anyone". */
+export function isGuestBookable(desk: Pick<EligibilityDesk, "assignedOccupantId" | "restrictionAssignments">): boolean {
+  return desk.assignedOccupantId === null && desk.restrictionAssignments.every((a) => a.restrictionMode === "ANYONE");
 }
 
 function formatMinutes(minutes: number): string {

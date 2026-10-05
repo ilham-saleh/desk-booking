@@ -43,7 +43,7 @@ describe("booking.listMine", () => {
   beforeAll(async () => {
     await db.organization.deleteMany({ where: { slug: "list-mine-test" } });
 
-    org = await db.organization.create({ data: { name: "List Mine Test", slug: "list-mine-test", ssoGoogleDomains: [] } });
+    org = await db.organization.create({ data: { name: "List Mine Test", slug: "list-mine-test" } });
     site = await db.site.create({
       data: { organizationId: org.id, name: "Site", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },
     });

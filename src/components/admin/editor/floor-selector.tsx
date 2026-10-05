@@ -35,7 +35,7 @@ export function FloorSelector({ siteId, selectedFloorId, onFloorSelect, isLoadin
         </Select>
 
         {floors && floors.length === 0 && (
-          <p className="text-sm text-yellow-600">No floors available. Create a floor first in the Facilities view.</p>
+          <p className="text-sm text-warning">No floors available. Create a floor first in the Facilities view.</p>
         )}
       </CardContent>
     </Card>

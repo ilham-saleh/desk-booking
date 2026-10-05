@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -25,12 +25,8 @@ import { SitePermissionsSection } from "@/components/admin/users/site-permission
 
 export type UserDetail = RouterOutputs["user"]["get"];
 
-/** Form-side schema: plain strings; the router trims/normalizes and turns an empty location into null. */
+/** Only the role is editable; every profile field is Entra-owned. */
 const formSchema = z.object({
-  firstName: z.string().trim().min(1, "First name is required").max(80),
-  lastName: z.string().trim().min(1, "Last name is required").max(80),
-  email: z.string().trim().email("Enter a valid email address").max(254),
-  location: z.string().trim().max(120),
   role: z.nativeEnum(Role),
 });
 type FormValues = z.infer<typeof formSchema>;
@@ -52,7 +48,7 @@ export function UserDetails({ userId }: { userId: string }) {
     return (
       <div className="space-y-4 p-8">
         <BackLink />
-        <div role="alert" className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+        <div role="alert" className="rounded-md border border-danger/25 bg-danger-soft p-4 text-sm text-danger">
           {user.error.data?.code === "FORBIDDEN" ? user.error.message : user.error.data?.code === "NOT_FOUND" ? "This user doesn't exist or has been removed." : "Couldn't load this user."}
         </div>
       </div>
@@ -81,23 +77,27 @@ function BackLink() {
   );
 }
 
+function ReadOnlyField({ id, label, value, help }: { id: string; label: string; value: string | null; help?: string }) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input id={id} value={value ?? ""} readOnly disabled placeholder="Not set in Entra" />
+      {help && <p className="text-muted-foreground text-xs">{help}</p>}
+    </div>
+  );
+}
+
 function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: () => void }) {
   const [pendingSave, setPendingSave] = useState<FormValues | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      firstName: user.firstName ?? "",
-      lastName: user.lastName ?? "",
-      email: user.email,
-      location: user.location ?? "",
-      role: user.role,
-    },
+    defaultValues: { role: user.role },
   });
   // Re-sync after a save (or an outside change) so the form reflects persisted values.
   useEffect(() => {
-    form.reset({ firstName: user.firstName ?? "", lastName: user.lastName ?? "", email: user.email, location: user.location ?? "", role: user.role });
+    form.reset({ role: user.role });
   }, [user, form]);
 
   const save = api.user.save.useMutation({
@@ -141,16 +141,16 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
       setPendingSave(values);
       return;
     }
-    save.mutate({ userId: user.id, ...values, location: values.location.length > 0 ? values.location : null });
+    save.mutate({ userId: user.id, role: values.role });
   };
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <BackLink />
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-bold">{user.name}</h1>
+            <h1 className="type-page-title">{user.name}</h1>
             <Badge variant="outline">{user.roleLabel}</Badge>
             {!user.isActive && <Badge variant="destructive">Inactive</Badge>}
           </div>
@@ -158,7 +158,7 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
         </div>
         {!user.isSelf &&
           (user.isActive ? (
-            <Button variant="outline" className="gap-2 text-red-700 hover:text-red-800" onClick={() => setConfirmRemove(true)}>
+            <Button variant="outline" className="gap-2 text-danger hover:text-danger" onClick={() => setConfirmRemove(true)}>
               <UserMinus className="size-4" />
               Remove User
             </Button>
@@ -175,78 +175,26 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
           <CardHeader>
             <CardTitle>Basic Information</CardTitle>
             <CardDescription>
-              Names, email and location are employee profile fields — the HRIS sync will keep them updated in the next phase. Role is managed here.
+              Profile details come from Microsoft Entra ID and update each time the employee signs in. Change them in Entra. Role is managed here.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Form {...form}>
               <form onSubmit={(event) => void form.handleSubmit(submit)(event)} className="space-y-5">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <FormField
-                    control={form.control}
-                    name="firstName"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>First Name</FormLabel>
-                        <FormControl>
-                          <Input autoComplete="off" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="lastName"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Last Name</FormLabel>
-                        <FormControl>
-                          <Input autoComplete="off" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <ReadOnlyField id="user-first-name" label="First Name" value={user.firstName} />
+                  <ReadOnlyField id="user-last-name" label="Last Name" value={user.lastName} />
                 </div>
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input type="email" autoComplete="off" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <ReadOnlyField id="user-email" label="Email" value={user.email} />
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <Label htmlFor="user-title">Title</Label>
-                    <Input id="user-title" value={user.title ?? ""} readOnly disabled placeholder="Not set" />
-                    <p className="text-muted-foreground text-xs">Synced from HRIS. Read-only.</p>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="user-department">Department</Label>
-                    <Input id="user-department" value={user.department ?? ""} readOnly disabled placeholder="Not set" />
-                    <p className="text-muted-foreground text-xs">Synced from HRIS. Read-only.</p>
-                  </div>
+                  <ReadOnlyField id="user-title" label="Title" value={user.title} />
+                  <ReadOnlyField id="user-department" label="Department" value={user.department} />
                 </div>
-                <FormField
-                  control={form.control}
-                  name="location"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Location</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. London" autoComplete="off" {...field} />
-                      </FormControl>
-                      <FormDescription>The employee&apos;s office location. This is informational — site permissions are granted separately below.</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                <ReadOnlyField
+                  id="user-location"
+                  label="Location"
+                  value={user.location}
+                  help="The employee's office location. This is informational — site permissions are granted separately below."
                 />
                 <FormField
                   control={form.control}
@@ -275,7 +223,7 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
                       </Select>
                       <FormDescription>{user.isSelf ? "You can't change your own role." : ROLE_HELP[field.value]}</FormDescription>
                       {roleChanged && (
-                        <p role="status" className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                        <p role="status" className="rounded-md border border-[#f5d2b3] bg-warning-soft p-2 text-xs text-[#6b3608]">
                           Save to apply the new role. Site permissions below are for the current role ({roleLabel(user.role)}) until then
                           {permissionsLostOnSave.length > 0 && ` — ${permissionsLostOnSave.length} existing site permission${permissionsLostOnSave.length === 1 ? "" : "s"} will be removed`}.
                         </p>
@@ -307,7 +255,9 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
               <dt className="text-muted-foreground">Last activity</dt>
               <dd>{user.lastLoginAt ? `Logged in ${formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true })}` : "Never logged in"}</dd>
               <dt className="text-muted-foreground">Employee ID</dt>
-              <dd>{user.employeeId ?? <span className="text-muted-foreground">Not synced yet</span>}</dd>
+              <dd>{user.employeeId ?? <span className="text-muted-foreground">Not set in Entra</span>}</dd>
+              <dt className="text-muted-foreground">Phone</dt>
+              <dd>{user.phone ?? <span className="text-muted-foreground">Not set in Entra</span>}</dd>
               <dt className="text-muted-foreground">Added</dt>
               <dd>{format(new Date(user.createdAt), "d MMM yyyy")}</dd>
             </dl>
@@ -359,7 +309,7 @@ function UserDetailsLoaded({ user, onChanged }: { user: UserDetail; onChanged: (
             </Button>
             <Button
               disabled={save.isPending}
-              onClick={() => pendingSave && save.mutate({ userId: user.id, ...pendingSave, location: pendingSave.location.length > 0 ? pendingSave.location : null })}
+              onClick={() => pendingSave && save.mutate({ userId: user.id, role: pendingSave.role })}
             >
               {save.isPending ? "Saving…" : "Change Role"}
             </Button>

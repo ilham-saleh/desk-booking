@@ -59,7 +59,7 @@ export function DeleteDeskDialog({
         </DialogHeader>
 
         {blockedMessage && (
-          <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div role="alert" className="rounded-md border border-[#f5d2b3] bg-warning-soft p-3 text-sm text-[#6b3608]">
             <p className="font-medium">This desk can&apos;t be deleted yet</p>
             <p className="mt-1">{blockedMessage}</p>
           </div>

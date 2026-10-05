@@ -1,38 +1,107 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ChevronDown, Upload } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Building2, Edit2, Layers, PencilRuler, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { api } from "@/lib/trpc/client";
+import {
+  pickValidId,
+  useLastFloorLocation,
+  useSaveLastFloorLocation,
+  useSyncedQueryParams,
+} from "@/lib/use-floor-location";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PublishControls } from "@/components/admin/editor/publish-controls";
 import { FloorCanvasEditor, type EditorDesk } from "@/components/admin/editor/floor-canvas-editor";
 import { FloorPlanUpload } from "@/components/admin/editor/floor-plan-upload";
-import { EditorLayout, type EditorAction, type EditorMode, type EditorObjectType } from "@/components/admin/editor/editor-layout";
+import {
+  EditorLayout,
+  type EditorAction,
+  type EditorMode,
+  type EditorObjectType,
+} from "@/components/admin/editor/editor-layout";
 import { DeleteDeskDialog } from "@/components/admin/editor/delete-desk-dialog";
+import { NeighbourhoodEditorDialogV2 } from "@/components/admin/editor/neighbourhood-editor-dialog-v2";
+import { NeighbourhoodDeskSelector } from "@/components/admin/editor/neighbourhood-desk-selector";
 import { DeskEditModal } from "@/components/admin/desk-edit-modal";
+import { MAP_BACKGROUND } from "@/components/floor-map/floor-canvas";
+import { MapLoadingOverlay } from "@/components/floor-map/map-chrome";
 
 const DEFAULT_PLAN_WIDTH = 1200;
 const DEFAULT_PLAN_HEIGHT = 800;
 
 export default function AdminEditorPage() {
-  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
-  const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const [linked] = useState(() => ({
+    siteId: searchParams.get("site"),
+    floorId: searchParams.get("floor"),
+  }));
+  const lastViewed = useLastFloorLocation();
+  /** Explicit picks in this visit; null falls back to the URL, then the last floor viewed. */
+  const [siteChoice, setSelectedSiteId] = useState<string | null>(null);
+  const [floorChoice, setSelectedFloorId] = useState<string | null>(null);
   const [mode, setMode] = useState<EditorMode>("select");
   const [activeObjectType, setActiveObjectType] = useState<EditorObjectType>(null);
   const [activeAction, setActiveAction] = useState<EditorAction>(null);
   const [selectedDeskId, setSelectedDeskId] = useState<string | null>(null);
   const [editingDeskId, setEditingDeskId] = useState<string | null>(null);
   const [deletingDeskId, setDeletingDeskId] = useState<string | null>(null);
+  const [editingNeighbourhoodId, setEditingNeighbourhoodId] = useState<string | null>(null);
+  const [selectingNeighbourhoodDesks, setSelectingNeighbourhoodDesks] = useState(false);
+  const [selectedNeighbourhoodDeskIds, setSelectedNeighbourhoodDeskIds] = useState<string[]>([]);
   const [showFloorPlanTools, setShowFloorPlanTools] = useState(false);
 
   const utils = api.useUtils();
   const { data: sites } = api.facility.list.useQuery();
-  const { data: floors = [] } = api.floor.listForSite.useQuery({ siteId: selectedSiteId! }, { enabled: !!selectedSiteId });
+  // Restored ids are only used once they're confirmed against what this admin can manage.
+  const selectedSiteId =
+    siteChoice ??
+    (sites
+      ? (pickValidId(
+          [linked.siteId, lastViewed?.siteId],
+          sites.map((s) => s.id),
+        ) ?? null)
+      : null);
+  const { data: floorList } = api.floor.listForSite.useQuery(
+    { siteId: selectedSiteId! },
+    { enabled: !!selectedSiteId },
+  );
+  const floors = floorList ?? [];
+  const selectedFloorId =
+    floorChoice ??
+    (floorList
+      ? (pickValidId(
+          [
+            linked.siteId === selectedSiteId ? linked.floorId : null,
+            lastViewed?.siteId === selectedSiteId ? lastViewed.floorId : null,
+          ],
+          floorList.map((f) => f.id),
+        ) ?? null)
+      : null);
+  useSaveLastFloorLocation(selectedSiteId, selectedFloorId);
+  useSyncedQueryParams(
+    { site: selectedSiteId, floor: selectedFloorId },
+    !!sites && (!selectedSiteId || !!floorList),
+  );
   const { data: draftPlan, isPending: planPending } = api.floor.getDraftFloorPlan.useQuery(
     { floorId: selectedFloorId! },
     { enabled: !!selectedFloorId },
@@ -41,9 +110,13 @@ export default function AdminEditorPage() {
     { floorId: selectedFloorId! },
     { enabled: !!selectedFloorId },
   );
+  const { data: neighbourhoods = [] } = api.neighbourhood.listForFloor.useQuery(
+    { floorId: selectedFloorId! },
+    { enabled: !!selectedFloorId },
+  );
 
   const selectedFloor = floors.find((f) => f.id === selectedFloorId);
-  const selectedSite = sites?.find((s) => s.id === selectedSiteId);
+  const editingNeighbourhood = neighbourhoods.find((n) => n.id === editingNeighbourhoodId) ?? null;
 
   const desks: EditorDesk[] = useMemo(
     () =>
@@ -86,7 +159,10 @@ export default function AdminEditorPage() {
     onError: (error) => toast.error(error.message),
   });
 
-  const handleToolAction = (objectType: Exclude<EditorObjectType, null>, action: Exclude<EditorAction, null>) => {
+  const handleToolAction = (
+    objectType: Exclude<EditorObjectType, null>,
+    action: Exclude<EditorAction, null>,
+  ) => {
     setMode("edit");
     if (objectType === "desks" && action === "edit" && selectedDeskId) {
       setEditingDeskId(selectedDeskId);
@@ -94,6 +170,20 @@ export default function AdminEditorPage() {
     }
     if (objectType === "desks" && action === "delete" && selectedDeskId) {
       setDeletingDeskId(selectedDeskId);
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "create") {
+      setSelectingNeighbourhoodDesks(true);
+      setSelectedNeighbourhoodDeskIds([]);
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "edit" && editingNeighbourhood) {
+      // neighbourhoodId is already in editingNeighbourhoodId state; just open the dialog
+      return;
+    }
+    if (objectType === "neighbourhoods" && action === "delete") {
+      // Implement delete in a later phase
+      toast.error("Delete not yet implemented");
       return;
     }
     if (activeObjectType === objectType && activeAction === action) {
@@ -110,68 +200,110 @@ export default function AdminEditorPage() {
   const hasFloorPlan = !!draftPlan?.renderedImageKey;
 
   const selectors = (
-    <div className="flex flex-wrap items-end gap-4">
-      <div className="grid min-w-56 gap-1.5">
-        <Label htmlFor="editor-site">Site</Label>
-        <Select
-          value={selectedSiteId ?? ""}
-          onValueChange={(val) => {
-            setSelectedSiteId(val);
-            changeFloor(null);
-          }}
-        >
-          <SelectTrigger id="editor-site" className="w-full">
+    <>
+      <Label htmlFor="editor-site" className="sr-only">
+        Site
+      </Label>
+      <Select
+        value={selectedSiteId ?? ""}
+        onValueChange={(val) => {
+          setSelectedSiteId(val);
+          changeFloor(null);
+        }}
+      >
+        <SelectTrigger id="editor-site" className="w-48">
+          <span className="flex min-w-0 items-center gap-2">
+            <Building2 className="text-muted-foreground size-4" />
             <SelectValue placeholder="Select a site…" />
-          </SelectTrigger>
-          <SelectContent>
-            {sites?.map((site) => (
-              <SelectItem key={site.id} value={site.id}>
-                {site.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid min-w-56 gap-1.5">
-        <Label htmlFor="editor-floor">Floor</Label>
-        <Select value={selectedFloorId ?? ""} onValueChange={(val) => changeFloor(val)} disabled={!selectedSiteId}>
-          <SelectTrigger id="editor-floor" className="w-full">
-            <SelectValue placeholder={selectedSiteId ? (floors.length ? "Select a floor…" : "No floors on this site") : "Select a site first"} />
-          </SelectTrigger>
-          <SelectContent>
-            {floors.map((floor) => (
-              <SelectItem key={floor.id} value={floor.id}>
-                {floor.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </div>
+          </span>
+        </SelectTrigger>
+        <SelectContent>
+          {sites?.map((site) => (
+            <SelectItem key={site.id} value={site.id}>
+              {site.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Label htmlFor="editor-floor" className="sr-only">
+        Floor
+      </Label>
+      <Select
+        value={selectedFloorId ?? ""}
+        onValueChange={(val) => changeFloor(val)}
+        disabled={!selectedSiteId}
+      >
+        <SelectTrigger id="editor-floor" className="w-44">
+          <span className="flex min-w-0 items-center gap-2">
+            <Layers className="text-muted-foreground size-4" />
+            <SelectValue
+              placeholder={
+                selectedSiteId
+                  ? floors.length
+                    ? "Select a floor…"
+                    : "No floors on this site"
+                  : "Select a site first"
+              }
+            />
+          </span>
+        </SelectTrigger>
+        <SelectContent>
+          {floors.map((floor) => (
+            <SelectItem key={floor.id} value={floor.id}>
+              {floor.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </>
   );
 
-  if (!selectedFloorId || !selectedFloor) {
-    return (
-      <div className="space-y-6 p-8">
-        <div>
-          <h1 className="text-3xl font-bold">Editing Platform</h1>
-          <p className="mt-2 text-gray-600">Choose a site and floor to load its floor plan and desks.</p>
-        </div>
-        <Card>
-          <CardContent className="pt-6">{selectors}</CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center justify-center py-12">
-            <p className="text-center text-gray-500">Select a site and floor to get started</p>
-          </CardContent>
-        </Card>
+  const floorReady = !!selectedFloorId && !!selectedFloor;
+
+  const toolbar = (
+    <>
+      <h1 className="sr-only">Editing Platform</h1>
+      {selectors}
+      {floorReady && (
+        <Badge variant={mode === "edit" ? "brand" : "muted"} dot className="ml-1">
+          {mode === "edit" ? "Editing" : "View only"}
+        </Badge>
+      )}
+      <div className="ml-auto flex items-center gap-2">
+        {selectedDesk && mode === "edit" && (
+          <>
+            <Button size="sm" variant="outline" onClick={() => setEditingDeskId(selectedDesk.id)}>
+              <Edit2 /> Edit desk {selectedDesk.number}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-danger hover:bg-danger-soft hover:text-danger"
+              onClick={() => setDeletingDeskId(selectedDesk.id)}
+            >
+              <Trash2 /> Delete
+            </Button>
+          </>
+        )}
+        {floorReady && (
+          <Button
+            size="sm"
+            variant={mode === "edit" ? "secondary" : "default"}
+            onClick={() => {
+              setMode(mode === "edit" ? "select" : "edit");
+              clearAction();
+            }}
+          >
+            {mode === "edit" ? "Done editing" : "Enter edit mode"}
+          </Button>
+        )}
       </div>
-    );
-  }
+    </>
+  );
 
   return (
     <EditorLayout
-      floorName={`${selectedSite?.name ?? ""} · ${selectedFloor.name}`}
+      toolbar={toolbar}
       mode={mode}
       onModeChange={(next) => {
         setMode(next);
@@ -183,95 +315,95 @@ export default function AdminEditorPage() {
       selectionLabel={selectedDesk ? `Desk ${selectedDesk.number}` : null}
       onClearSelection={() => setSelectedDeskId(null)}
       hasFloorPlan={hasFloorPlan}
+      floorSelected={floorReady}
+      onOpenFloorPlan={() => setShowFloorPlanTools(true)}
     >
-      <div className="flex flex-col gap-4 p-4">
-        {/* Site / Floor selectors stay visible while editing */}
-        <div className="flex flex-wrap items-end justify-between gap-4 rounded-xl border bg-white p-3">
-          {selectors}
-          <div className="flex items-center gap-2">
-            <Button
-              variant={mode === "edit" ? "default" : "outline"}
-              size="sm"
-              onClick={() => {
-                setMode(mode === "edit" ? "select" : "edit");
-                clearAction();
-              }}
-            >
-              {mode === "edit" ? "Editing" : "Enter Edit mode"}
-            </Button>
-            {selectedDesk && mode === "edit" && (
-              <>
-                <Button size="sm" variant="outline" onClick={() => setEditingDeskId(selectedDesk.id)}>
-                  Edit Desk {selectedDesk.number}
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => setDeletingDeskId(selectedDesk.id)}>
-                  Delete
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {planPending || desksPending ? (
-          <Card>
-            <CardContent className="flex items-center justify-center py-12">
-              <p className="text-center text-gray-500" role="status">
-                Loading floor plan and desks…
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <FloorCanvasEditor
-            key={selectedFloorId}
-            floorId={selectedFloorId}
-            backgroundImageUrl={draftPlan?.renderedImageKey ? `/api/files/${draftPlan.renderedImageKey}` : null}
-            imageWidth={planWidth}
-            imageHeight={planHeight}
-            desks={desks}
-            mode={mode}
-            activeObjectType={activeObjectType}
-            activeAction={activeAction}
-            selectedDeskId={selectedDeskId}
-            onSelectDesk={setSelectedDeskId}
-            placingDesk={placingDesk}
-            onPlaceDesk={(x, y) => {
-              if (createDesk.isPending) return;
-              createDesk.mutate({ floorId: selectedFloorId, x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 });
-            }}
-            onOpenDesk={(deskId) => {
-              setSelectedDeskId(deskId);
-              setEditingDeskId(deskId);
-              if (activeAction === "edit") clearAction();
-            }}
-            onRequestDeleteDesk={(deskId) => {
-              setSelectedDeskId(deskId);
-              setDeletingDeskId(deskId);
-              if (activeAction === "delete") clearAction();
-            }}
-            onCancelAction={clearAction}
+      {!floorReady || !selectedFloorId || !selectedFloor ? (
+        <div className={`flex h-full items-center justify-center p-6 ${MAP_BACKGROUND}`}>
+          <EmptyState
+            icon={PencilRuler}
+            title="Choose a floor to edit"
+            description="Pick a site and floor in the bar above to load its floor plan, desks, rooms and utilities."
+            className="bg-surface max-w-sm rounded-2xl border shadow-sm"
           />
-        )}
+        </div>
+      ) : planPending || desksPending ? (
+        <div className={`relative h-full ${MAP_BACKGROUND}`}>
+          <MapLoadingOverlay visible label="Loading floor plan and desks…" />
+        </div>
+      ) : (
+        <FloorCanvasEditor
+          key={selectedFloorId}
+          floorId={selectedFloorId}
+          backgroundImageUrl={
+            draftPlan?.renderedImageKey ? `/api/files/${draftPlan.renderedImageKey}` : null
+          }
+          imageWidth={planWidth}
+          imageHeight={planHeight}
+          desks={desks}
+          mode={mode}
+          activeObjectType={activeObjectType}
+          activeAction={activeAction}
+          selectedDeskId={selectedDeskId}
+          onSelectDesk={setSelectedDeskId}
+          placingDesk={placingDesk}
+          onPlaceDesk={(x, y) => {
+            if (createDesk.isPending) return;
+            createDesk.mutate({
+              floorId: selectedFloorId,
+              x: Math.round(x * 100) / 100,
+              y: Math.round(y * 100) / 100,
+            });
+          }}
+          onOpenDesk={(deskId) => {
+            setSelectedDeskId(deskId);
+            setEditingDeskId(deskId);
+            if (activeAction === "edit") clearAction();
+          }}
+          onRequestDeleteDesk={(deskId) => {
+            setSelectedDeskId(deskId);
+            setDeletingDeskId(deskId);
+            if (activeAction === "delete") clearAction();
+          }}
+          onCancelAction={clearAction}
+          overlay={
+            selectingNeighbourhoodDesks ? (
+              <NeighbourhoodDeskSelector
+                desks={floorDesks.map((d) => ({ id: d.id, number: d.number, x: d.x, y: d.y }))}
+                onSelectionComplete={(deskIds) => {
+                  setSelectedNeighbourhoodDeskIds(deskIds);
+                  setSelectingNeighbourhoodDesks(false);
+                  setEditingNeighbourhoodId("__new__");
+                }}
+                onCancel={() => {
+                  setSelectingNeighbourhoodDesks(false);
+                  setSelectedNeighbourhoodDeskIds([]);
+                  clearAction();
+                }}
+              />
+            ) : undefined
+          }
+        />
+      )}
 
-        {/* Floor plan upload / publish — kept, but out of the way of desk editing */}
-        <div className="rounded-xl border bg-white">
-          <button
-            type="button"
-            className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-medium"
-            onClick={() => setShowFloorPlanTools((v) => !v)}
-            aria-expanded={showFloorPlanTools}
-          >
-            <span className="flex items-center gap-2">
-              <Upload className="size-4" /> Floor plan image &amp; publishing
-              {!hasFloorPlan && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">No floor plan uploaded</span>}
-            </span>
-            <ChevronDown className={`size-4 transition-transform ${showFloorPlanTools ? "rotate-180" : ""}`} />
-          </button>
-          {showFloorPlanTools && (
-            <div className="grid gap-4 border-t p-4 md:grid-cols-2">
+      {selectedFloorId && selectedFloor && (
+        <Dialog open={showFloorPlanTools} onOpenChange={setShowFloorPlanTools}>
+          <DialogContent className="sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Floor plan · {selectedFloor.name}</DialogTitle>
+              <DialogDescription>
+                Upload a new floor plan image as a draft, then publish it to the live Floor Map.
+                Replacing a plan can misalign existing desks — check their positions after
+                publishing.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 md:grid-cols-2">
               <FloorPlanUpload
                 floorId={selectedFloorId}
                 floorName={selectedFloor.name}
-                onUploadSuccess={() => void utils.floor.getDraftFloorPlan.invalidate({ floorId: selectedFloorId })}
+                onUploadSuccess={() =>
+                  void utils.floor.getDraftFloorPlan.invalidate({ floorId: selectedFloorId })
+                }
               />
               <PublishControls
                 floorId={selectedFloorId}
@@ -282,29 +414,52 @@ export default function AdminEditorPage() {
                 }}
               />
             </div>
-          )}
-        </div>
-      </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
-      <DeskEditModal
-        deskId={editingDeskId}
-        open={!!editingDeskId}
-        onOpenChange={(open) => !open && setEditingDeskId(null)}
-        onSaved={() => {
-          void utils.desk.listForFloor.invalidate({ floorId: selectedFloorId });
-          void utils.floor.get.invalidate({ floorId: selectedFloorId });
-        }}
-      />
+      {selectedFloorId && (
+        <>
+          <DeskEditModal
+            deskId={editingDeskId}
+            open={!!editingDeskId}
+            onOpenChange={(open) => !open && setEditingDeskId(null)}
+            onSaved={() => {
+              void utils.desk.listForFloor.invalidate({ floorId: selectedFloorId });
+              void utils.floor.get.invalidate({ floorId: selectedFloorId });
+            }}
+          />
 
-      <DeleteDeskDialog
-        desk={deletingDesk}
-        open={!!deletingDeskId}
-        onOpenChange={(open) => !open && setDeletingDeskId(null)}
-        onDeleted={(deskId) => {
-          if (selectedDeskId === deskId) setSelectedDeskId(null);
-        }}
-        onOpenDeskEditor={(deskId) => setEditingDeskId(deskId)}
-      />
+          <DeleteDeskDialog
+            desk={deletingDesk}
+            open={!!deletingDeskId}
+            onOpenChange={(open) => !open && setDeletingDeskId(null)}
+            onDeleted={(deskId) => {
+              if (selectedDeskId === deskId) setSelectedDeskId(null);
+            }}
+            onOpenDeskEditor={(deskId) => setEditingDeskId(deskId)}
+          />
+
+          <NeighbourhoodEditorDialogV2
+            open={!!editingNeighbourhoodId}
+            neighbourhood={editingNeighbourhoodId === "__new__" ? null : editingNeighbourhood}
+            floorId={selectedFloorId}
+            desks={floorDesks.map((d) => ({ id: d.id, number: d.number }))}
+            preSelectedDeskIds={
+              editingNeighbourhoodId === "__new__" ? selectedNeighbourhoodDeskIds : []
+            }
+            onClose={() => {
+              setEditingNeighbourhoodId(null);
+              setSelectedNeighbourhoodDeskIds([]);
+            }}
+            onSuccess={() => {
+              void utils.neighbourhood.listForFloor.invalidate({ floorId: selectedFloorId });
+              void utils.floor.get.invalidate({ floorId: selectedFloorId });
+              setSelectedNeighbourhoodDeskIds([]);
+            }}
+          />
+        </>
+      )}
     </EditorLayout>
   );
 }

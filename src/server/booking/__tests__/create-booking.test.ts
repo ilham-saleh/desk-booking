@@ -66,8 +66,8 @@ describe("booking.create / booking.cancel", () => {
     await db.user.deleteMany();
     await db.organization.deleteMany({ where: { slug: { in: ["booking-test-a", "booking-test-b"] } } });
 
-    orgA = await db.organization.create({ data: { name: "Booking Test A", slug: "booking-test-a", ssoGoogleDomains: [] } });
-    orgB = await db.organization.create({ data: { name: "Booking Test B", slug: "booking-test-b", ssoGoogleDomains: [] } });
+    orgA = await db.organization.create({ data: { name: "Booking Test A", slug: "booking-test-a" } });
+    orgB = await db.organization.create({ data: { name: "Booking Test B", slug: "booking-test-b" } });
 
     siteA = await db.site.create({
       data: { organizationId: orgA.id, name: "Site A", timeZone: "Europe/London", operatingHoursStart: 420, operatingHoursEnd: 1080 },

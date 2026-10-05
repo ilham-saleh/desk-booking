@@ -85,7 +85,7 @@ export function Combobox({
           aria-label={aria["aria-label"]}
           disabled={disabled}
           className={cn(
-            "border-input focus-visible:border-ring focus-visible:ring-ring/50 flex h-9 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-left text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+            "border-input bg-surface hover:border-navy/30 focus-visible:border-cyan focus-visible:ring-cyan/20 data-[state=open]:border-cyan data-[state=open]:ring-[3px] data-[state=open]:ring-cyan/20 flex h-10 w-full items-center justify-between gap-2 rounded-[10px] border px-3 py-2 text-left text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-60",
             className,
           )}
         >
@@ -93,7 +93,7 @@ export function Combobox({
             {selected?.color && <Swatch color={selected.color} />}
             <span className="truncate">{selected?.label ?? placeholder}</span>
           </span>
-          <ChevronDownIcon className="size-4 shrink-0 opacity-50" />
+          <ChevronDownIcon className="text-muted-foreground size-4 shrink-0" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-(--radix-popover-trigger-width) min-w-64 p-0" collisionPadding={12}>
@@ -186,14 +186,14 @@ export function MultiCombobox({
           aria-label={aria["aria-label"]}
           disabled={disabled}
           className={cn(
-            "border-input focus-visible:border-ring focus-visible:ring-ring/50 flex min-h-9 w-full items-center justify-between gap-2 rounded-md border bg-transparent px-2 py-1 text-left text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
+            "border-input bg-surface hover:border-navy/30 focus-visible:border-cyan focus-visible:ring-cyan/20 data-[state=open]:border-cyan data-[state=open]:ring-[3px] data-[state=open]:ring-cyan/20 flex min-h-10 w-full items-center justify-between gap-2 rounded-[10px] border px-2 py-1.5 text-left text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-60",
             className,
           )}
         >
           <span className="flex min-w-0 flex-wrap items-center gap-1">
             {values.length === 0 && <span className="text-muted-foreground px-1">{placeholder}</span>}
             {values.slice(0, 4).map((value) => (
-              <span key={value} className="bg-secondary text-secondary-foreground inline-flex max-w-48 items-center gap-1 rounded-full px-2 py-0.5 text-xs">
+              <span key={value} className="bg-navy-soft text-navy inline-flex max-w-48 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium">
                 <span className="truncate">{byValue.get(value)?.label ?? value}</span>
                 <span
                   role="button"
@@ -211,7 +211,7 @@ export function MultiCombobox({
             ))}
             {values.length > 4 && <span className="text-muted-foreground px-1 text-xs">+{values.length - 4} more</span>}
           </span>
-          <ChevronDownIcon className="size-4 shrink-0 opacity-50" />
+          <ChevronDownIcon className="text-muted-foreground size-4 shrink-0" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-(--radix-popover-trigger-width) min-w-64 p-0" collisionPadding={12}>
@@ -238,7 +238,7 @@ export function MultiCombobox({
         {canAddCustom && (
           <button
             type="button"
-            className="hover:bg-accent flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm"
+            className="hover:bg-navy-soft flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm transition-colors"
             onClick={() => {
               onChange([...values, trimmed]);
               setQuery("");
@@ -282,7 +282,7 @@ function OptionList({
   emptyText: string;
 }) {
   return (
-    <ul id={id} role="listbox" className="max-h-[min(16rem,calc(var(--radix-popover-content-available-height)-6rem))] overflow-y-auto overscroll-contain p-1">
+    <ul id={id} role="listbox" className="max-h-[min(16rem,calc(var(--radix-popover-content-available-height)-6rem))] overflow-y-auto overscroll-contain p-1.5 scroll-quiet">
       {options.length === 0 && <li className="text-muted-foreground px-3 py-4 text-center text-sm">{emptyText}</li>}
       {options.map((option) => {
         const selected = isSelected(option);
@@ -292,11 +292,11 @@ function OptionList({
               type="button"
               onClick={() => onPick(option)}
               className={cn(
-                "hover:bg-accent focus-visible:bg-accent flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none",
-                selected && "bg-accent/60",
+                "hover:bg-navy-soft focus-visible:bg-navy-soft flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm outline-none transition-colors duration-100",
+                selected && "text-navy font-medium",
               )}
             >
-              <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">{selected && <CheckIcon className="size-4" />}</span>
+              <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">{selected && <CheckIcon className="text-cyan size-4" strokeWidth={2.5} />}</span>
               {option.color && <Swatch color={option.color} className="mt-1" />}
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{option.label}</span>

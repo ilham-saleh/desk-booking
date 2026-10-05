@@ -3,14 +3,6 @@ import { z } from "zod";
 import { Role } from "@/generated/prisma/enums";
 import { ASSIGNABLE_ROLES } from "@/lib/roles";
 
-const optionalText = (max: number) =>
-  z
-    .string()
-    .trim()
-    .max(max)
-    .transform((value) => (value.length === 0 ? null : value))
-    .nullable();
-
 export const USER_STATUS_FILTERS = ["active", "inactive", "all"] as const;
 export type UserStatusFilter = (typeof USER_STATUS_FILTERS)[number];
 
@@ -33,13 +25,12 @@ export const assignableRoleSchema = z.nativeEnum(Role).refine((role) => ASSIGNAB
   message: "That role can't be assigned here.",
 });
 
-/** User Details → Save User. Title/department are HRIS-owned and not accepted here. */
+/**
+ * User Details → Save User. Only the app-owned role is accepted: names, email,
+ * title, department and location are Entra-owned and refresh on sign-in.
+ */
 export const userSaveInputSchema = z.object({
   userId: z.string().min(1),
-  firstName: z.string().trim().min(1, "First name is required").max(80),
-  lastName: z.string().trim().min(1, "Last name is required").max(80),
-  email: z.string().trim().toLowerCase().email("Enter a valid email address").max(254),
-  location: optionalText(120),
   role: assignableRoleSchema,
 });
 export type UserSaveInput = z.infer<typeof userSaveInputSchema>;

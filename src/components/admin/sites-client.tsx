@@ -41,11 +41,11 @@ export function AdminSitesClient() {
   };
 
   return (
-    <div className="space-y-6 p-8">
+    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Facilities / Sites</h1>
-          <p className="mt-2 text-gray-600">Create and manage workplace facilities, operating hours, and timezones.</p>
+          <h1 className="type-page-title">Facilities / Sites</h1>
+          <p className="text-muted-foreground mt-1 max-w-[70ch] text-sm leading-6">Create and manage workplace facilities, operating hours, and timezones.</p>
         </div>
         <Button
           onClick={() => {
@@ -66,9 +66,9 @@ export function AdminSitesClient() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="text-center text-gray-500">Loading facilities...</div>
+            <div className="text-center text-muted-foreground">Loading facilities...</div>
           ) : !sites || sites.length === 0 ? (
-            <div className="text-center text-gray-500 py-8">
+            <div className="text-center text-muted-foreground py-8">
               No facilities yet. Create one to get started.
             </div>
           ) : (
@@ -88,7 +88,7 @@ export function AdminSitesClient() {
                     <TableCell className="font-medium">
                       <Link href={`/admin/sites/${site.id}`} className="hover:underline flex items-center gap-2">
                         {site.name}
-                        <ChevronRight className="size-4 text-gray-400" />
+                        <ChevronRight className="size-4 text-muted-foreground" />
                       </Link>
                     </TableCell>
                     <TableCell>
@@ -98,7 +98,7 @@ export function AdminSitesClient() {
                           {site.city}, {site.country}
                         </span>
                       ) : (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
                     <TableCell className="text-sm">{site.timeZone}</TableCell>

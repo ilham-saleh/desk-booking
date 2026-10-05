@@ -130,7 +130,7 @@ export function FloorsList({ siteId, onFloorsChange }: FloorsListProps) {
                     }}
                     variant="ghost"
                     size="sm"
-                    className="text-blue-600 hover:text-blue-700"
+                    className="text-navy hover:text-navy"
                   >
                     Manage Desks
                   </Button>
@@ -139,7 +139,7 @@ export function FloorsList({ siteId, onFloorsChange }: FloorsListProps) {
                     variant="ghost"
                     size="sm"
                     disabled={deleteFloor.isPending}
-                    className="text-red-600 hover:text-red-700"
+                    className="text-danger hover:text-danger"
                   >
                     Delete
                   </Button>
