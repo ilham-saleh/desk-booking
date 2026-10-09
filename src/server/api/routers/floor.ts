@@ -14,6 +14,7 @@ import {
 } from "@/lib/schemas/floor";
 import { storage, floorPlanKey } from "@/server/storage";
 import { readImageDimensions } from "@/server/storage/image-dimensions";
+import { markerFootprintBounds } from "@/components/floor-map/marker-scale";
 
 // Re-export for backward compatibility
 export { floorCreateInputSchema, type FloorCreateInput, floorUpdateInputSchema, type FloorUpdateInput, floorPlanUploadInputSchema, type FloorPlanUploadInput };
@@ -231,6 +232,7 @@ export const floorRouter = createTRPCRouter({
             renderedImageKey: live?.renderedImageKey,
             imageWidth: live?.imageWidth,
             imageHeight: live?.imageHeight,
+            markerSize: live?.markerSize,
             createdById: ctx.session.user.id,
           },
         });
@@ -295,6 +297,65 @@ export const floorRouter = createTRPCRouter({
     }),
 
   /**
+   * Set (or clear, with null) the desk-marker size for a floor's plan image.
+   * Writes the draft; the live version is updated too while it shows the same
+   * image, since the size belongs to the image rather than to a publish.
+   * FACILITY_ADMIN or higher.
+   */
+  setMarkerSize: siteAdminProcedure
+    .input(z.object({ floorId: z.string().min(1), markerSize: z.number().positive().finite().nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const floor = await ctx.db.floor.findUnique({ where: { id: input.floorId } });
+      if (!floor) throw new TRPCError({ code: "NOT_FOUND", message: "Floor not found." });
+
+      await assertSiteAdmin(ctx, floor.siteId);
+
+      const draft = await ctx.db.floorPlanVersion.findFirst({ where: { floorId: input.floorId, status: "DRAFT" } });
+      if (!draft?.imageWidth || !draft.imageHeight) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Upload a floor plan image before adjusting marker size." });
+      }
+
+      let markerSize: number | null = null;
+      if (input.markerSize !== null) {
+        const { min, max } = markerFootprintBounds(draft.imageWidth, draft.imageHeight);
+        // Small tolerance: the client rounds slider values.
+        if (input.markerSize < min - 0.5 || input.markerSize > max + 0.5) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Marker size must be between ${Math.round(min)} and ${Math.round(max)} plan pixels for this floor plan.`,
+          });
+        }
+        markerSize = Math.min(max, Math.max(min, input.markerSize));
+      }
+
+      const sharedLiveId =
+        floor.livePlanVersionId &&
+        (await ctx.db.floorPlanVersion.findFirst({
+          where: { id: floor.livePlanVersionId, renderedImageKey: draft.renderedImageKey, imageWidth: draft.imageWidth, imageHeight: draft.imageHeight },
+          select: { id: true },
+        }))?.id;
+
+      const updated = await ctx.db.$transaction(async (tx) => {
+        const result = await tx.floorPlanVersion.update({ where: { id: draft.id }, data: { markerSize } });
+        if (sharedLiveId) await tx.floorPlanVersion.update({ where: { id: sharedLiveId }, data: { markerSize } });
+        await tx.auditLog.create({
+          data: {
+            organizationId: ctx.organizationId,
+            actorId: ctx.session.user.id,
+            action: "UPDATE",
+            targetType: "FloorPlan",
+            targetId: input.floorId,
+            before: { markerSize: draft.markerSize },
+            after: { markerSize, appliedToLive: !!sharedLiveId },
+          },
+        });
+        return result;
+      });
+
+      return updated;
+    }),
+
+  /**
    * Revert to a previous floor-plan version (create new draft from archived).
    * FACILITY_ADMIN or higher.
    */
@@ -331,6 +392,7 @@ export const floorRouter = createTRPCRouter({
           renderedImageKey: version.renderedImageKey,
           imageWidth: version.imageWidth,
           imageHeight: version.imageHeight,
+          markerSize: version.markerSize,
           createdById: ctx.session.user.id,
         },
       });
@@ -444,6 +506,8 @@ export const floorRouter = createTRPCRouter({
           renderedImageKey: renderedKey,
           imageWidth,
           imageHeight,
+          // A new image can be drawn at a different scale — back to automatic sizing.
+          markerSize: null,
         },
       });
 
