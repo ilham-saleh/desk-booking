@@ -1,7 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type Konva from "konva";
+
+import {
+  MARKER,
+  MIN_HIT_PX,
+  MIN_PLAN_TEXT_PX,
+  markerGroupScale,
+  markerLevel,
+  type MarkerLevel,
+} from "@/components/floor-map/marker-scale";
 
 /**
  * Pan/zoom for a Konva floor-plan stage, shared by the employee Floor Map and
@@ -13,38 +22,53 @@ import type Konva from "konva";
  * - Zoom/pan are applied imperatively to the Konva stage, never through React
  *   state, so a wheel tick or drag costs one canvas redraw and zero React
  *   renders.
- * - Nodes named `COUNTER_SCALE` (desk markers, labels) get the inverse of the
- *   stage scale on every change, so they keep a constant on-screen size while
- *   their position tracks the plan.
+ * - Markers are sized on the plan and zoom with it (see marker-scale.ts). On
+ *   every change the viewport updates the few zoom-dependent nodes, found by
+ *   name:
+ *   - `MARKER_SCALE` groups (desks, utilities) get the floor's marker scale,
+ *     floored so they never shrink below a legible on-screen size;
+ *   - `SCREEN_SCALE` nodes inside them (hover/selection tags) cancel the
+ *     group's total scale and keep a constant on-screen size;
+ *   - `HIT_AREA` circles grow so a small marker is still easy to click/tap;
+ *   - `PLAN_TEXT` (room names) hides while too small to read.
+ * - The marker "level" (sprite resolution, whether markers carry their desk
+ *   number) changes only at thresholds; components subscribe to it with
+ *   `useMarkerLevel`, so React re-renders markers only when it changes.
  */
 
-export const COUNTER_SCALE = "counter-scale";
-/** Desk-number labels fade in only once the plan is zoomed past this factor of "fit". */
-export const LABEL_NAME = "zoom-label";
-const LABEL_MIN_ZOOM = 1.6;
+export const MARKER_SCALE = "marker-scale";
+export const SCREEN_SCALE = "screen-scale";
+export const HIT_AREA = "marker-hit";
+export const PLAN_TEXT = "plan-text";
+/** Desk-number tags shown on hover while markers are too small to carry the number. */
+export const HOVER_LABEL = "hover-label";
 
-const MIN_ZOOM = 0.5; // relative to "fit to floor"
+const MIN_ZOOM = 0.5; // relative to the default view
 const MAX_ZOOM = 8;
 const FIT_PADDING = 40;
+/**
+ * The default view sits slightly closer than "whole plan with padding": floor
+ * plans carry their own white margins, so this fills the frame with the floor.
+ */
+const DEFAULT_ZOOM = 1.08;
 const ANIMATION_MS = 220;
 
 /** Ref-free imperative API — safe to pass to child components and call from handlers/effects. */
 export interface MapViewportControls {
-  /** Current stage scale (handlers/effects only — never read during render). */
-  getScale: () => number;
-  /** Whether zoom-dependent labels should currently be shown. */
-  labelsVisible: () => boolean;
+  /** Current marker level; a stable object until the level changes. */
+  getMarkerLevel: () => MarkerLevel;
+  subscribeMarkerLevel: (listener: () => void) => () => void;
   /**
-   * Re-apply counter-scaling and label visibility to every node. Call from a
-   * layout effect after rendering new markers so they're correct before paint.
+   * Re-apply zoom-dependent sizing to every node. Call from a layout effect
+   * after rendering new markers so they're correct before paint.
    */
   refresh: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
   fit: (animate?: boolean) => void;
-  /** Centre a plan point, zooming in to at least `zoom`× fit. */
+  /** Centre a plan point, zooming in to at least `zoom`× the default view. */
   focusOn: (x: number, y: number, zoom?: number) => void;
-  /** Zoom as a percentage of "fit"; subscribe for display without re-rendering the map. */
+  /** Zoom as a percentage of the default view; subscribe for display without re-rendering the map. */
   subscribeZoom: (listener: (percent: number) => void) => () => void;
 }
 
@@ -71,7 +95,18 @@ interface View {
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
 
-export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: number; contentHeight: number }): MapViewport {
+const devicePixelRatio = () => (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+
+export function useMapViewport({
+  contentWidth,
+  contentHeight,
+  markerPlanScale,
+}: {
+  contentWidth: number;
+  contentHeight: number;
+  /** Marker-group scale for this floor, from `markerPlanScale()`. */
+  markerPlanScale: number;
+}): MapViewport {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -81,6 +116,9 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
   const animationRef = useRef<number | null>(null);
   const listenersRef = useRef(new Set<(percent: number) => void>());
   const pinchRef = useRef<{ distance: number; center: Konva.Vector2d } | null>(null);
+  const planScaleRef = useRef(markerPlanScale);
+  const levelRef = useRef<MarkerLevel>(markerLevel(MARKER.width, devicePixelRatio()));
+  const levelListenersRef = useRef(new Set<() => void>());
 
   useEffect(() => {
     const el = containerRef.current;
@@ -98,7 +136,7 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
   const computeFit = useCallback((): View => {
     const { width, height } = size;
     const padding = Math.min(FIT_PADDING, width * 0.05, height * 0.05);
-    const scale = Math.max(0.01, Math.min((width - padding * 2) / contentWidth, (height - padding * 2) / contentHeight));
+    const scale = DEFAULT_ZOOM * Math.max(0.01, Math.min((width - padding * 2) / contentWidth, (height - padding * 2) / contentHeight));
     return { scale, x: (width - contentWidth * scale) / 2, y: (height - contentHeight * scale) / 2 };
   }, [size, contentWidth, contentHeight]);
 
@@ -108,13 +146,25 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
     stage.scale({ x: view.scale, y: view.scale });
     stage.position({ x: view.x, y: view.y });
     scaleRef.current = view.scale;
-    const inverse = 1 / view.scale;
-    for (const node of stage.find(`.${COUNTER_SCALE}`)) node.scale({ x: inverse, y: inverse });
-    const showLabels = view.scale / fitScaleRef.current >= LABEL_MIN_ZOOM;
-    for (const node of stage.find(`.${LABEL_NAME}`)) node.visible(showLabels);
+
+    const group = markerGroupScale(planScaleRef.current, view.scale);
+    const markerPx = group * view.scale; // screen pixels per marker unit
+    for (const node of stage.find(`.${MARKER_SCALE}`)) node.scale({ x: group, y: group });
+    for (const node of stage.find(`.${SCREEN_SCALE}`)) node.scale({ x: 1 / markerPx, y: 1 / markerPx });
+    for (const node of stage.find(`.${HIT_AREA}`)) {
+      const grow = Math.max(1, MIN_HIT_PX / 2 / ((node as Konva.Circle).radius() * markerPx));
+      node.scale({ x: grow, y: grow });
+    }
+    for (const node of stage.find(`.${PLAN_TEXT}`)) node.visible((node as Konva.Text).fontSize() * view.scale >= MIN_PLAN_TEXT_PX);
     stage.batchDraw();
+
     const percent = Math.round((view.scale / fitScaleRef.current) * 100);
     for (const listener of listenersRef.current) listener(percent);
+    const level = markerLevel(MARKER.width * markerPx, devicePixelRatio());
+    if (level.tier !== levelRef.current.tier || level.labelled !== levelRef.current.labelled) {
+      levelRef.current = level;
+      for (const listener of levelListenersRef.current) listener();
+    }
   }, []);
 
   const currentView = useCallback((): View => {
@@ -177,6 +227,13 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
   }, [size, computeFit, apply, currentView]);
 
   useEffect(() => cancelAnimation, []);
+
+  // The floor's marker size follows its desks (e.g. an admin moving one); re-apply when it changes.
+  useLayoutEffect(() => {
+    if (planScaleRef.current === markerPlanScale) return;
+    planScaleRef.current = markerPlanScale;
+    if (stageRef.current) apply(currentView());
+  }, [markerPlanScale, apply, currentView]);
 
   const zoomIn = useCallback(() => {
     userMovedRef.current = true;
@@ -278,15 +335,20 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
     };
   }, []);
 
-  const labelsVisible = useCallback(() => scaleRef.current / fitScaleRef.current >= LABEL_MIN_ZOOM, []);
-  const getScale = useCallback(() => scaleRef.current, []);
+  const getMarkerLevel = useCallback(() => levelRef.current, []);
+  const subscribeMarkerLevel = useCallback((listener: () => void) => {
+    levelListenersRef.current.add(listener);
+    return () => {
+      levelListenersRef.current.delete(listener);
+    };
+  }, []);
   const refresh = useCallback(() => {
     if (stageRef.current) apply(currentView());
   }, [apply, currentView]);
 
   const controls = useMemo<MapViewportControls>(
-    () => ({ getScale, labelsVisible, refresh, zoomIn, zoomOut, fit, focusOn, subscribeZoom }),
-    [getScale, labelsVisible, refresh, zoomIn, zoomOut, fit, focusOn, subscribeZoom],
+    () => ({ getMarkerLevel, subscribeMarkerLevel, refresh, zoomIn, zoomOut, fit, focusOn, subscribeZoom }),
+    [getMarkerLevel, subscribeMarkerLevel, refresh, zoomIn, zoomOut, fit, focusOn, subscribeZoom],
   );
   const stageHandlers = useMemo(
     () => ({ onWheel, onDragStart, onTouchMove, onTouchEnd, dragBoundFunc }),
@@ -294,4 +356,9 @@ export function useMapViewport({ contentWidth, contentHeight }: { contentWidth: 
   );
 
   return { containerRef, stageRef, size, stageHandlers, controls };
+}
+
+/** The current marker level; re-renders only when markers change resolution or start/stop carrying numbers. */
+export function useMarkerLevel(controls: MapViewportControls): MarkerLevel {
+  return useSyncExternalStore(controls.subscribeMarkerLevel, controls.getMarkerLevel, controls.getMarkerLevel);
 }

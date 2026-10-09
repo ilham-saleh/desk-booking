@@ -369,6 +369,7 @@ export function FloorMapView({
                 renderedImageKey={floor.data?.livePlanVersion?.renderedImageKey ?? null}
                 imageWidth={floor.data?.livePlanVersion?.imageWidth ?? null}
                 imageHeight={floor.data?.livePlanVersion?.imageHeight ?? null}
+                markerSize={floor.data?.livePlanVersion?.markerSize ?? null}
                 desks={desks}
                 rooms={floor.data?.rooms ?? []}
                 utilities={floor.data?.utilities ?? []}

@@ -280,6 +280,10 @@ model FloorPlanVersion {
   /// scale the background image and position desks/rooms/utilities correctly.
   imageWidth       Int?
   imageHeight      Int?
+  /// Admin-chosen desk-marker footprint in plan-image pixels; null = sized
+  /// automatically from desk spacing. Belongs to the image's drawing scale, so
+  /// uploading a new image resets it.
+  markerSize       Float?
   createdById      String
   publishedAt      DateTime?
 

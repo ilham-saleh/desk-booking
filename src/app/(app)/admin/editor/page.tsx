@@ -45,6 +45,8 @@ import { NeighbourhoodDeskSelector } from "@/components/admin/editor/neighbourho
 import { DeskEditModal } from "@/components/admin/desk-edit-modal";
 import { MAP_BACKGROUND } from "@/components/floor-map/floor-canvas";
 import { MapLoadingOverlay } from "@/components/floor-map/map-chrome";
+import { MarkerSizeControl } from "@/components/admin/editor/marker-size-control";
+import { autoMarkerFootprint, markerFootprintBounds } from "@/components/floor-map/marker-scale";
 
 const DEFAULT_PLAN_WIDTH = 1200;
 const DEFAULT_PLAN_HEIGHT = 800;
@@ -69,6 +71,10 @@ export default function AdminEditorPage() {
   const [selectingNeighbourhoodDesks, setSelectingNeighbourhoodDesks] = useState(false);
   const [selectedNeighbourhoodDeskIds, setSelectedNeighbourhoodDeskIds] = useState<string[]>([]);
   const [showFloorPlanTools, setShowFloorPlanTools] = useState(false);
+  /** Unsaved marker size shown on the canvas while the slider moves, tied to one plan image. */
+  const [markerPreview, setMarkerPreview] = useState<{ planKey: string; size: number | null } | null>(null);
+  /** Re-uploads keep the same storage key, so count them to reset the marker-size control. */
+  const [planUploads, setPlanUploads] = useState(0);
 
   const utils = api.useUtils();
   const { data: sites } = api.facility.list.useQuery();
@@ -198,6 +204,10 @@ export default function AdminEditorPage() {
   const planWidth = draftPlan?.imageWidth ?? DEFAULT_PLAN_WIDTH;
   const planHeight = draftPlan?.imageHeight ?? DEFAULT_PLAN_HEIGHT;
   const hasFloorPlan = !!draftPlan?.renderedImageKey;
+  const planKey = draftPlan ? `${draftPlan.id}:${draftPlan.renderedImageKey ?? ""}:${planUploads}` : "";
+  const markerSize =
+    markerPreview && markerPreview.planKey === planKey ? markerPreview.size : (draftPlan?.markerSize ?? null);
+  const autoMarkerSize = useMemo(() => autoMarkerFootprint(desks, planWidth, planHeight), [desks, planWidth, planHeight]);
 
   const selectors = (
     <>
@@ -317,6 +327,19 @@ export default function AdminEditorPage() {
       hasFloorPlan={hasFloorPlan}
       floorSelected={floorReady}
       onOpenFloorPlan={() => setShowFloorPlanTools(true)}
+      floorPlanSettings={
+        floorReady && hasFloorPlan && draftPlan && selectedFloorId ? (
+          <MarkerSizeControl
+            key={planKey}
+            floorId={selectedFloorId}
+            savedSize={draftPlan.markerSize}
+            autoSize={autoMarkerSize}
+            bounds={markerFootprintBounds(planWidth, planHeight)}
+            disabled={mode !== "edit"}
+            onPreview={(size) => setMarkerPreview(size === undefined ? null : { planKey, size })}
+          />
+        ) : null
+      }
     >
       {!floorReady || !selectedFloorId || !selectedFloor ? (
         <div className={`flex h-full items-center justify-center p-6 ${MAP_BACKGROUND}`}>
@@ -340,6 +363,7 @@ export default function AdminEditorPage() {
           }
           imageWidth={planWidth}
           imageHeight={planHeight}
+          markerSize={markerSize}
           desks={desks}
           mode={mode}
           activeObjectType={activeObjectType}
@@ -401,9 +425,12 @@ export default function AdminEditorPage() {
               <FloorPlanUpload
                 floorId={selectedFloorId}
                 floorName={selectedFloor.name}
-                onUploadSuccess={() =>
-                  void utils.floor.getDraftFloorPlan.invalidate({ floorId: selectedFloorId })
-                }
+                onUploadSuccess={() => {
+                  // A new image resets the saved size to automatic on the server.
+                  setMarkerPreview(null);
+                  setPlanUploads((n) => n + 1);
+                  void utils.floor.getDraftFloorPlan.invalidate({ floorId: selectedFloorId });
+                }}
               />
               <PublishControls
                 floorId={selectedFloorId}

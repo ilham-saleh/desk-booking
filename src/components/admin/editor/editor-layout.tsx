@@ -42,6 +42,8 @@ interface EditorLayoutProps {
   /** False until a floor is chosen — tools are shown but disabled. */
   floorSelected: boolean;
   onOpenFloorPlan: () => void;
+  /** Extra floor-plan settings (e.g. marker size), shown under the floor-plan tools while the rail is expanded. */
+  floorPlanSettings?: React.ReactNode;
 }
 
 interface ToolDef {
@@ -109,6 +111,7 @@ export function EditorLayout({
   hasFloorPlan,
   floorSelected,
   onOpenFloorPlan,
+  floorPlanSettings,
 }: EditorLayoutProps) {
   const [railOpen, setRailOpen] = useState(true);
 
@@ -251,6 +254,7 @@ export function EditorLayout({
                 </span>
               )}
             </button>
+            {railOpen && floorPlanSettings}
           </div>
         </div>
 

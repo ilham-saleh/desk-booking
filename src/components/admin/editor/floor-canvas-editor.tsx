@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Circle, Group, Image as KonvaImage, Label as KonvaLabel, Layer, Rect, Stage, Tag, Text } from "react-konva";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import useImage from "use-image";
 import { toast } from "sonner";
@@ -14,10 +14,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { EditorAction, EditorMode, EditorObjectType } from "@/components/admin/editor/editor-layout";
-import { MARKER, useMarkerSprites, type MarkerSprites } from "@/components/floor-map/desk-markers";
+import { MARKER, MARKER_STYLES, spriteKey, useMarkerSprites, type MarkerSprites } from "@/components/floor-map/desk-markers";
 import { MapControls, MapLegend, MapLoadingOverlay } from "@/components/floor-map/map-chrome";
-import { COUNTER_SCALE, LABEL_NAME, useMapViewport, type MapViewportControls } from "@/components/floor-map/map-viewport";
-import { MAP_BACKGROUND } from "@/components/floor-map/floor-canvas";
+import { DiscNumber, MARKER_FONT, MarkerHitArea, MarkerTag } from "@/components/floor-map/marker-parts";
+import { markerPlanScale } from "@/components/floor-map/marker-scale";
+import { HOVER_LABEL, MARKER_SCALE, useMapViewport, useMarkerLevel, type MapViewportControls } from "@/components/floor-map/map-viewport";
+import { MAP_BACKGROUND, RoomName } from "@/components/floor-map/floor-canvas";
 
 /**
  * Admin floor-plan canvas. Every object position is stored in FLOOR-PLAN IMAGE
@@ -25,7 +27,8 @@ import { MAP_BACKGROUND } from "@/components/floor-map/floor-canvas";
  * in viewport pixels: pan/zoom live on the stage transform, so a resize, a
  * zoom or a refresh never moves a desk. Pointer positions are converted with
  * Konva's relative pointer position, which accounts for scale + pan. Markers
- * and labels are counter-scaled to a constant on-screen size.
+ * are sized on the plan exactly as on the Floor Map, so admins place desks at
+ * the size employees will see them.
  */
 
 export interface EditorDesk {
@@ -43,6 +46,8 @@ interface FloorCanvasEditorProps {
   backgroundImageUrl: string | null;
   imageWidth: number;
   imageHeight: number;
+  /** Marker footprint in plan pixels (saved or being previewed); null = automatic. */
+  markerSize: number | null;
   desks: EditorDesk[];
   mode: EditorMode;
   activeObjectType: EditorObjectType;
@@ -60,13 +65,13 @@ interface FloorCanvasEditorProps {
 }
 
 const RESTRICTION_BADGE = "#d9692a";
-const FONT = "Inter, Arial, sans-serif";
 
 export function FloorCanvasEditor({
   floorId,
   backgroundImageUrl,
   imageWidth,
   imageHeight,
+  markerSize,
   desks,
   mode,
   activeObjectType,
@@ -81,10 +86,16 @@ export function FloorCanvasEditor({
   overlay,
 }: FloorCanvasEditorProps) {
   const utils = api.useUtils();
-  const { containerRef, stageRef, size, stageHandlers, controls } = useMapViewport({ contentWidth: imageWidth, contentHeight: imageHeight });
+  const planScale = useMemo(() => markerPlanScale(desks, imageWidth, imageHeight, markerSize), [desks, imageWidth, imageHeight, markerSize]);
+  const { containerRef, stageRef, size, stageHandlers, controls } = useMapViewport({
+    contentWidth: imageWidth,
+    contentHeight: imageHeight,
+    markerPlanScale: planScale,
+  });
   const { refresh } = controls;
+  const level = useMarkerLevel(controls);
   const [image, imageStatus] = useImage(backgroundImageUrl ?? "");
-  const { sprites, iconSource } = useMarkerSprites();
+  const { sprites, iconSource } = useMarkerSprites(level.tier);
   const ghostRef = useRef<Konva.Group>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -341,9 +352,7 @@ export function FloorCanvasEditor({
                       strokeScaleEnabled={false}
                       cornerRadius={3}
                     />
-                    <Group name={COUNTER_SCALE} listening={false}>
-                      <Text x={6} y={5} text={room.name} fontSize={11} fontStyle="600" fontFamily={FONT} fill="#0d2137" />
-                    </Group>
+                    <RoomName room={{ ...room, x: 0, y: 0 }} planScale={planScale} fill="#0d2137" />
                   </Group>
                 );
               })}
@@ -355,7 +364,7 @@ export function FloorCanvasEditor({
                     key={utility.id}
                     x={utility.x}
                     y={utility.y}
-                    name={COUNTER_SCALE}
+                    name={MARKER_SCALE}
                     draggable={isEdit && !placing}
                     onClick={(e) => {
                       if (placing) return;
@@ -371,8 +380,11 @@ export function FloorCanvasEditor({
                       updateUtility.mutate({ utilityId: utility.id, type: utility.type, label: utility.label ?? undefined, x: next.x, y: next.y });
                     }}
                   >
-                    <Circle radius={selected ? 8 : 6.5} fill="#0e7c86" stroke={selected ? "#1dbfc2" : "#ffffff"} strokeWidth={selected ? 3 : 2} />
-                    <Text x={11} y={-6} text={utility.label ?? utility.type} fontSize={11} fontStyle="500" fontFamily={FONT} fill="#0e5a61" listening={false} />
+                    <MarkerHitArea />
+                    <Circle radius={selected ? 5.5 : 4.5} fill="#0e7c86" stroke={selected ? "#1dbfc2" : "#ffffff"} strokeWidth={selected ? 2 : 1.5} />
+                    {(level.labelled || selected) && (
+                      <Text x={7} y={-3.5} text={utility.label ?? utility.type} fontSize={7} fontStyle="500" fontFamily={MARKER_FONT} fill="#0e5a61" listening={false} />
+                    )}
                   </Group>
                 );
               })}
@@ -387,6 +399,7 @@ export function FloorCanvasEditor({
                   placing={placing}
                   isEdit={isEdit}
                   cursor={cursor}
+                  labelled={level.labelled}
                   controls={controls}
                   onClick={handleDeskClick}
                   onDblClick={(deskId, e) => {
@@ -402,17 +415,14 @@ export function FloorCanvasEditor({
                 />
               )}
 
-              <Group ref={ghostRef} name={COUNTER_SCALE} visible={false} listening={false} opacity={0.9}>
+              <Group ref={ghostRef} name={MARKER_SCALE} visible={false} listening={false} opacity={0.9}>
                 {placingDesk && sprites?.get("ghost") && (
                   <>
                     <KonvaImage image={sprites.get("ghost")} x={-MARKER.anchorX} y={-MARKER.anchorY} width={MARKER.width} height={MARKER.height} />
-                    <KonvaLabel ref={(node) => { node?.offsetX(node.width() / 2); }} y={MARKER.height - MARKER.anchorY + 2}>
-                      <Tag fill="#012b30" cornerRadius={5} />
-                      <Text text="New desk" fontSize={10.5} fontStyle="600" fontFamily={FONT} padding={3} fill="#ffffff" />
-                    </KonvaLabel>
+                    <MarkerTag text="New desk" variant="ghost" />
                   </>
                 )}
-                {(placingUtility || placingRoom) && <Circle radius={7} fill="rgba(14, 124, 134, 0.55)" stroke="#ffffff" strokeWidth={2} />}
+                {(placingUtility || placingRoom) && <Circle radius={5.5} fill="rgba(14, 124, 134, 0.55)" stroke="#ffffff" strokeWidth={1.5} />}
               </Group>
             </Layer>
           </Stage>
@@ -531,6 +541,8 @@ interface EditorDeskMarkersProps {
   placing: boolean;
   isEdit: boolean;
   cursor: string;
+  /** Markers are large enough on screen to carry their desk number. */
+  labelled: boolean;
   controls: MapViewportControls;
   onClick: (deskId: string, e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onDblClick: (deskId: string, e: Konva.KonvaEventObject<MouseEvent>) => void;
@@ -547,13 +559,14 @@ const EditorDeskMarkers = memo(function EditorDeskMarkers({
   placing,
   isEdit,
   cursor,
+  labelled,
   controls,
   onClick,
   onDblClick,
   onDragStart,
   onDragEnd,
 }: EditorDeskMarkersProps) {
-  const { refresh, labelsVisible } = controls;
+  const { refresh } = controls;
   useLayoutEffect(() => {
     refresh();
   });
@@ -571,7 +584,7 @@ const EditorDeskMarkers = memo(function EditorDeskMarkers({
             key={desk.id}
             x={position.x}
             y={position.y}
-            name={COUNTER_SCALE}
+            name={MARKER_SCALE}
             draggable={draggable}
             onClick={(e) => onClick(desk.id, e)}
             onTap={(e) => onClick(desk.id, e)}
@@ -581,22 +594,23 @@ const EditorDeskMarkers = memo(function EditorDeskMarkers({
               e.cancelBubble = true;
               onDragEnd(desk, e);
             }}
-            // Hover shows the desk number only. The group's scale is owned by the viewport's
-            // counter-scaling — animating it here would resize markers mid-zoom.
+            // Hover shows the desk number only (while it isn't drawn in the disc). The group's
+            // scale is owned by the viewport — animating it here would resize markers mid-zoom.
             onMouseEnter={(e) => {
               if (placing) return;
               const stage = e.target.getStage();
               if (stage) stage.container().style.cursor = isEdit ? "move" : "pointer";
-              (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(true);
+              (e.currentTarget as Konva.Group).findOne(`.${HOVER_LABEL}`)?.visible(true);
             }}
             onMouseLeave={(e) => {
               const stage = e.target.getStage();
               if (stage) stage.container().style.cursor = cursor;
-              if (!selected && !labelsVisible()) (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(false);
+              (e.currentTarget as Konva.Group).findOne(`.${HOVER_LABEL}`)?.visible(false);
             }}
           >
+            <MarkerHitArea />
             <KonvaImage
-              image={sprites.get(selected ? `${kind}:selected` : kind)}
+              image={sprites.get(spriteKey(kind, selected, labelled))}
               x={-MARKER.anchorX}
               y={-MARKER.anchorY}
               width={MARKER.width}
@@ -615,17 +629,11 @@ const EditorDeskMarkers = memo(function EditorDeskMarkers({
                 perfectDrawEnabled={false}
               />
             )}
-            <KonvaLabel
-              ref={(node) => {
-                node?.offsetX(node.width() / 2);
-              }}
-              name={selected ? undefined : LABEL_NAME}
-              y={MARKER.height - MARKER.anchorY + 2}
-              listening={false}
-            >
-              <Tag fill={selected ? "#00264c" : "#ffffff"} stroke={selected ? "#00264c" : "#d3dbe4"} strokeWidth={1} cornerRadius={5} perfectDrawEnabled={false} />
-              <Text text={desk.number} fontSize={10.5} fontStyle="600" fontFamily={FONT} padding={3} fill={selected ? "#ffffff" : "#0d2137"} perfectDrawEnabled={false} />
-            </KonvaLabel>
+            {labelled ? (
+              <DiscNumber text={desk.number} color={MARKER_STYLES[kind].glyph} />
+            ) : (
+              <MarkerTag text={desk.number} variant={selected ? "selected" : "plain"} hover />
+            )}
           </Group>
         );
       })}

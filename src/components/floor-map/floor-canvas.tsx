@@ -1,8 +1,8 @@
 "use client";
 
-import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import Konva from "konva";
-import { Circle, Group, Image as KonvaImage, Label, Layer, Rect, Stage, Tag, Text } from "react-konva";
+import { Circle, Group, Image as KonvaImage, Layer, Rect, Stage, Text } from "react-konva";
 import useImage from "use-image";
 import { MapPinOff } from "lucide-react";
 
@@ -10,9 +10,11 @@ import { DeskState } from "@/generated/prisma/enums";
 import { floorPlanImageUrl } from "@/lib/floor-plan-url";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/ui/empty-state";
-import { MARKER, useMarkerSprites, type MarkerKind, type MarkerSprites } from "@/components/floor-map/desk-markers";
+import { MARKER, MARKER_STYLES, spriteKey, useMarkerSprites, type MarkerKind, type MarkerSprites } from "@/components/floor-map/desk-markers";
 import { MapControls, MapLegend, MapLoadingOverlay, type LegendEntry } from "@/components/floor-map/map-chrome";
-import { COUNTER_SCALE, LABEL_NAME, useMapViewport, type MapViewportControls } from "@/components/floor-map/map-viewport";
+import { DiscNumber, MARKER_FONT, MarkerHitArea, MarkerTag } from "@/components/floor-map/marker-parts";
+import { markerPlanScale, roomLabelFontSize } from "@/components/floor-map/marker-scale";
+import { HOVER_LABEL, MARKER_SCALE, PLAN_TEXT, useMapViewport, useMarkerLevel, type MapViewportControls } from "@/components/floor-map/map-viewport";
 
 export interface FloorCanvasDesk {
   id: string;
@@ -76,13 +78,14 @@ export function markerKind(desk: FloorCanvasDesk): Extract<MarkerKind, "availabl
  * Read-only employee floor map: select + inspect only. The map fills its
  * parent (give the parent a height) and fits the floor plan into it; pan by
  * dragging, zoom with the wheel/pinch or the floating controls. Desk
- * coordinates are floor-plan image pixels; markers keep a constant on-screen
- * size at any zoom.
+ * coordinates are floor-plan image pixels; markers are sized on the plan and
+ * zoom with it, carrying their desk number once they're large enough.
  */
 export function FloorCanvas({
   renderedImageKey,
   imageWidth,
   imageHeight,
+  markerSize = null,
   desks,
   rooms,
   utilities,
@@ -103,6 +106,8 @@ export function FloorCanvas({
   renderedImageKey: string | null;
   imageWidth: number | null;
   imageHeight: number | null;
+  /** Admin-chosen marker footprint in plan pixels (FloorPlanVersion.markerSize); null = automatic. */
+  markerSize?: number | null;
   desks: FloorCanvasDesk[];
   rooms: FloorCanvasRoom[];
   utilities: FloorCanvasUtility[];
@@ -126,6 +131,7 @@ export function FloorCanvas({
           renderedImageKey={renderedImageKey}
           imageWidth={imageWidth ?? 1200}
           imageHeight={imageHeight ?? 800}
+          markerSize={markerSize}
           desks={desks}
           rooms={rooms}
           utilities={utilities}
@@ -169,6 +175,7 @@ function FloorStage({
   renderedImageKey,
   imageWidth,
   imageHeight,
+  markerSize,
   desks,
   rooms,
   utilities,
@@ -182,6 +189,7 @@ function FloorStage({
   renderedImageKey: string | null;
   imageWidth: number;
   imageHeight: number;
+  markerSize: number | null;
   desks: FloorCanvasDesk[];
   rooms: FloorCanvasRoom[];
   utilities: FloorCanvasUtility[];
@@ -192,10 +200,16 @@ function FloorStage({
   focusDeskId: string | null;
   loading: boolean;
 }) {
-  const { containerRef, stageRef, size, stageHandlers, controls } = useMapViewport({ contentWidth: imageWidth, contentHeight: imageHeight });
+  const planScale = useMemo(() => markerPlanScale(desks, imageWidth, imageHeight, markerSize), [desks, imageWidth, imageHeight, markerSize]);
+  const { containerRef, stageRef, size, stageHandlers, controls } = useMapViewport({
+    contentWidth: imageWidth,
+    contentHeight: imageHeight,
+    markerPlanScale: planScale,
+  });
   const { refresh, focusOn } = controls;
+  const level = useMarkerLevel(controls);
   const [image, imageStatus] = useImage(renderedImageKey ? floorPlanImageUrl(renderedImageKey) : "");
-  const { sprites, iconSource } = useMarkerSprites();
+  const { sprites, iconSource } = useMarkerSprites(level.tier);
   const planLayerRef = useRef<Konva.Layer>(null);
   const markerLayerRef = useRef<Konva.Layer>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -244,15 +258,16 @@ function FloorStage({
                 if (members.length === 0) return null;
                 const xs = members.map((d) => d.x);
                 const ys = members.map((d) => d.y);
-                const minX = Math.min(...xs) - 25;
-                const minY = Math.min(...ys) - 25;
+                const pad = MARKER.width * planScale * 0.75;
+                const minX = Math.min(...xs) - pad;
+                const minY = Math.min(...ys) - pad;
                 return (
                   <Rect
                     key={neighbourhood.id}
                     x={minX}
                     y={minY}
-                    width={Math.max(...xs) + 25 - minX}
-                    height={Math.max(...ys) + 25 - minY}
+                    width={Math.max(...xs) + pad - minX}
+                    height={Math.max(...ys) + pad - minY}
                     fill={neighbourhood.color}
                     opacity={0.12}
                     stroke={neighbourhood.color}
@@ -283,24 +298,15 @@ function FloorStage({
 
             <Layer ref={markerLayerRef} opacity={0}>
               {rooms.map((room) => (
-                <Group key={`${room.id}-label`} x={room.x} y={room.y} name={COUNTER_SCALE} listening={false}>
-                  <Text x={6} y={5} text={room.name} fontSize={11} fontStyle="600" fontFamily="Inter, Arial, sans-serif" fill="#43546a" />
-                </Group>
+                <RoomName key={`${room.id}-label`} room={room} planScale={planScale} fill="#43546a" />
               ))}
 
               {utilities.map((utility) => (
-                <Group key={utility.id} x={utility.x} y={utility.y} name={COUNTER_SCALE} listening={false}>
-                  <Circle radius={5.5} fill="#0e7c86" stroke="#ffffff" strokeWidth={2} />
-                  <Text
-                    name={LABEL_NAME}
-                    x={10}
-                    y={-6}
-                    text={utility.label ?? utility.type}
-                    fontSize={11}
-                    fontStyle="500"
-                    fontFamily="Inter, Arial, sans-serif"
-                    fill="#0e5a61"
-                  />
+                <Group key={utility.id} x={utility.x} y={utility.y} name={MARKER_SCALE} listening={false}>
+                  <Circle radius={4.5} fill="#0e7c86" stroke="#ffffff" strokeWidth={1.5} />
+                  {level.labelled && (
+                    <Text x={6.5} y={-3.5} text={utility.label ?? utility.type} fontSize={7} fontStyle="500" fontFamily={MARKER_FONT} fill="#0e5a61" />
+                  )}
                 </Group>
               ))}
 
@@ -312,6 +318,7 @@ function FloorStage({
                   onSelectDesk={onSelectDesk}
                   highlightMode={highlightMode}
                   focusDeskId={focusDeskId}
+                  labelled={level.labelled}
                   viewport={controls}
                 />
               )}
@@ -340,6 +347,8 @@ interface DeskMarkersProps {
   onSelectDesk: (deskId: string) => void;
   highlightMode: boolean;
   focusDeskId: string | null;
+  /** Markers are large enough on screen to carry their desk number. */
+  labelled: boolean;
   viewport: MapViewportControls;
 }
 
@@ -350,6 +359,7 @@ const DeskMarkers = memo(function DeskMarkers({
   onSelectDesk,
   highlightMode,
   focusDeskId,
+  labelled,
   viewport,
 }: DeskMarkersProps) {
   const onSelectRef = useRef(onSelectDesk);
@@ -357,7 +367,7 @@ const DeskMarkers = memo(function DeskMarkers({
     onSelectRef.current = onSelectDesk;
   });
 
-  const { labelsVisible, refresh } = viewport;
+  const { refresh } = viewport;
 
   useLayoutEffect(() => {
     refresh();
@@ -373,29 +383,30 @@ const DeskMarkers = memo(function DeskMarkers({
         const kind = markerKind(desk);
         const interactive = !highlightMode || (desk.freeForRequestedSlot === true && desk.eligibleForViewer !== false);
         const selected = desk.id === selectedDeskId;
-        const sprite = sprites.get(selected ? `${kind}:selected` : kind);
+        const sprite = sprites.get(spriteKey(kind, selected, labelled));
         return (
           <Group
             key={desk.id}
             x={desk.x}
             y={desk.y}
-            name={COUNTER_SCALE}
+            name={MARKER_SCALE}
             opacity={interactive ? 1 : 0.32}
             listening={interactive}
             onClick={() => onSelectRef.current(desk.id)}
             onTap={() => onSelectRef.current(desk.id)}
-            // Hover shows the desk number; the marker itself never changes size.
+            // Hover shows the desk number while it isn't drawn in the disc; the marker itself never changes size.
             onMouseEnter={(e) => {
               const stage = e.target.getStage();
               if (stage) stage.container().style.cursor = "pointer";
-              (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(true);
+              (e.currentTarget as Konva.Group).findOne(`.${HOVER_LABEL}`)?.visible(true);
             }}
             onMouseLeave={(e) => {
               const stage = e.target.getStage();
               if (stage) stage.container().style.cursor = "";
-              if (!selected && !labelsVisible()) (e.currentTarget as Konva.Group).findOne(`.${LABEL_NAME}`)?.visible(false);
+              (e.currentTarget as Konva.Group).findOne(`.${HOVER_LABEL}`)?.visible(false);
             }}
           >
+            <MarkerHitArea />
             {sprite && (
               <KonvaImage
                 image={sprite}
@@ -418,32 +429,11 @@ const DeskMarkers = memo(function DeskMarkers({
                 perfectDrawEnabled={false}
               />
             )}
-            <Label
-              ref={(node) => {
-                node?.offsetX(node.width() / 2);
-              }}
-              name={selected ? undefined : LABEL_NAME}
-              y={MARKER.height - MARKER.anchorY + 2}
-              listening={false}
-            >
-              <Tag
-                fill={selected ? "#00264c" : "#ffffff"}
-                stroke={selected ? "#00264c" : "#d3dbe4"}
-                strokeWidth={1}
-                cornerRadius={5}
-                opacity={0.97}
-                perfectDrawEnabled={false}
-              />
-              <Text
-                text={desk.number}
-                fontSize={10.5}
-                fontStyle="600"
-                fontFamily="Inter, Arial, sans-serif"
-                padding={3}
-                fill={selected ? "#ffffff" : "#0d2137"}
-                perfectDrawEnabled={false}
-              />
-            </Label>
+            {labelled ? (
+              <DiscNumber text={desk.number} color={MARKER_STYLES[kind].glyph} />
+            ) : (
+              <MarkerTag text={desk.number} variant={selected ? "selected" : "plain"} hover />
+            )}
             {desk.id === focusDeskId && <PulseRing />}
           </Group>
         );
@@ -455,7 +445,7 @@ const DeskMarkers = memo(function DeskMarkers({
 /**
  * Expanding, fading ring around a desk — animated on the Konva layer (not React
  * state) so it costs no re-renders. Runs until the desk loses focus. Lives
- * inside the counter-scaled marker group, so its size is in screen pixels.
+ * inside the marker group, so it is sized in marker units.
  */
 function PulseRing() {
   const ref = useRef<Konva.Circle>(null);
@@ -476,4 +466,26 @@ function PulseRing() {
     };
   }, []);
   return <Circle ref={ref} radius={MARKER.radius + 4} stroke="#1dbfc2" strokeWidth={3.5} listening={false} />;
+}
+
+/** A room's name, sized to fit the room on the plan; hidden by the viewport while too small to read. */
+export function RoomName({ room, planScale, fill }: { room: FloorCanvasRoom; planScale: number; fill: string }) {
+  const fontSize = roomLabelFontSize(room.name, room.width, room.height, planScale);
+  return (
+    <Text
+      name={PLAN_TEXT}
+      x={room.x + fontSize * 0.5}
+      y={room.y + fontSize * 0.4}
+      width={Math.max(1, room.width - fontSize)}
+      text={room.name}
+      fontSize={fontSize}
+      fontStyle="600"
+      fontFamily={MARKER_FONT}
+      fill={fill}
+      wrap="none"
+      ellipsis
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  );
 }
