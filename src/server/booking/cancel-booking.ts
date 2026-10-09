@@ -4,6 +4,7 @@ import type { CancelBookingInput } from "@/lib/schemas/booking";
 import { BookingStatus } from "@/generated/prisma/enums";
 import type { Session } from "@/server/auth/roles";
 import { assertCanManageBooking } from "@/server/auth/authorization";
+import { notifyDeskWatchers } from "@/server/notifications/desk-watch";
 import type { ScopedDb } from "@/server/tenancy";
 
 const TERMINAL_STATUSES: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.AUTO_CANCELLED, BookingStatus.COMPLETED];
@@ -54,6 +55,8 @@ export async function cancelBooking(
       after: { status: BookingStatus.CANCELLED },
     },
   });
+
+  await notifyDeskWatchers(ctx.db, cancelled, { releasedEarly: false, actorId });
 
   return cancelled;
 }

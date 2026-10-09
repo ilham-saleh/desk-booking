@@ -1,14 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Bell, ChevronDown, LogOut } from "lucide-react";
+import { ChevronDown, LogOut } from "lucide-react";
 
 import type { Role } from "@/generated/prisma/enums";
 import { roleLabel } from "@/lib/roles";
 import { signOutAction } from "@/server/auth/actions";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +18,7 @@ import {
 import { MobileSidebar } from "@/components/layout/sidebar";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { GlobalSearch } from "@/components/search/global-search";
+import { NotificationsMenu } from "@/components/layout/notifications-menu";
 
 function initials(name: string) {
   return name
@@ -31,7 +30,6 @@ function initials(name: string) {
 }
 
 export function TopBar({ user }: { user: { name: string; email: string; role: Role } }) {
-  const unreadNotifications = 0;
   const router = useRouter();
 
   return (
@@ -53,14 +51,7 @@ export function TopBar({ user }: { user: { name: string; email: string; role: Ro
       />
 
       <div className="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="Notifications" className="relative" disabled>
-          <Bell className="size-[18px]" strokeWidth={1.75} />
-          {unreadNotifications > 0 && (
-            <Badge className="absolute -top-1 -right-1 size-5 justify-center rounded-full p-0 text-[10px]">
-              {unreadNotifications}
-            </Badge>
-          )}
-        </Button>
+        <NotificationsMenu />
 
         <span aria-hidden className="bg-border mx-1.5 h-6 w-px" />
 

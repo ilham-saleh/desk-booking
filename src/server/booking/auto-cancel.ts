@@ -1,14 +1,25 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { BookingStatus } from "@/generated/prisma/enums";
+import { notifyDeskWatchers } from "@/server/notifications/desk-watch";
+import { NOTIFICATION_TYPES, type AutoCancelledPayload } from "@/server/notifications/types";
 
-/** Spec section C: not checked in by this many minutes before start → auto-cancelled. Configurable. */
+/** Not checked in within this many minutes after the booking starts → auto-cancelled. */
 export const CHECK_IN_DEADLINE_MINUTES = 60;
 
 /**
+ * When a booking must be checked in by: CHECK_IN_DEADLINE_MINUTES after it
+ * starts, or after it was made if that was later (booking the current slot
+ * late still gets the full hour).
+ */
+export function checkInDeadline(booking: { startAt: Date; createdAt: Date }): Date {
+  return new Date(Math.max(booking.startAt.getTime(), booking.createdAt.getTime()) + CHECK_IN_DEADLINE_MINUTES * 60_000);
+}
+
+/**
  * Sweeps CONFIRMED bookings on check-in-required desks whose check-in
- * deadline (start - CHECK_IN_DEADLINE_MINUTES) has arrived without a
- * check-in, auto-cancelling them and releasing the desk (CLAUDE.md rule 6).
- * Run on a recurring pg-boss schedule from jobs/worker.ts.
+ * deadline (see checkInDeadline) has passed without a check-in,
+ * auto-cancelling them and releasing the desk for the rest of the booking
+ * (CLAUDE.md rule 6). Run on a recurring pg-boss schedule from jobs/worker.ts.
  *
  * No request/session here, so writes go through the raw PrismaClient — but
  * every audit/notification write is still scoped to that row's own
@@ -19,16 +30,28 @@ export const CHECK_IN_DEADLINE_MINUTES = 60;
  * enforces it" pattern.
  */
 export async function runCheckInAutoCancelSweep(db: PrismaClient): Promise<number> {
-  const deadline = new Date(Date.now() + CHECK_IN_DEADLINE_MINUTES * 60_000);
+  // checkInDeadline() <= now  ⟺  both startAt and createdAt are at least CHECK_IN_DEADLINE_MINUTES ago.
+  const cutoff = new Date(Date.now() - CHECK_IN_DEADLINE_MINUTES * 60_000);
 
   const candidates = await db.booking.findMany({
     where: {
       status: BookingStatus.CONFIRMED,
       checkedInAt: null,
-      startAt: { lte: deadline },
+      startAt: { lte: cutoff },
+      createdAt: { lte: cutoff },
       desk: { requiresCheckIn: true },
     },
-    select: { id: true, organizationId: true, userId: true, bookedById: true, deskId: true, startAt: true, endAt: true, desk: { select: { number: true } } },
+    select: {
+      id: true,
+      organizationId: true,
+      userId: true,
+      bookedById: true,
+      deskId: true,
+      date: true,
+      startAt: true,
+      endAt: true,
+      desk: { select: { number: true, floor: { select: { id: true, name: true, site: { select: { id: true, name: true, timeZone: true } } } } } },
+    },
   });
 
   let cancelledCount = 0;
@@ -55,19 +78,24 @@ export async function runCheckInAutoCancelSweep(db: PrismaClient): Promise<numbe
     });
 
     const notifyUserId = booking.userId ?? booking.bookedById;
+    const payload: AutoCancelledPayload = {
+      bookingId: booking.id,
+      deskId: booking.deskId,
+      deskNumber: booking.desk.number,
+      floorId: booking.desk.floor.id,
+      floorName: booking.desk.floor.name,
+      siteId: booking.desk.floor.site.id,
+      siteName: booking.desk.floor.site.name,
+      timeZone: booking.desk.floor.site.timeZone,
+      startAt: booking.startAt.toISOString(),
+      endAt: booking.endAt.toISOString(),
+    };
     await db.notification.create({
-      data: {
-        organizationId: booking.organizationId,
-        userId: notifyUserId,
-        type: "booking.autoCancelled",
-        payload: {
-          bookingId: booking.id,
-          deskNumber: booking.desk.number,
-          startAt: booking.startAt.toISOString(),
-          endAt: booking.endAt.toISOString(),
-        },
-      },
+      data: { organizationId: booking.organizationId, userId: notifyUserId, type: NOTIFICATION_TYPES.autoCancelled, payload: { ...payload } },
     });
+
+    // The booking had already started, so the desk is free from now until its end.
+    await notifyDeskWatchers(db, booking, { releasedEarly: true, actorId: null });
   }
 
   return cancelledCount;
