@@ -1221,6 +1221,59 @@ After confirmation:
 
 ---
 
+# 32A. BULK TEAM BOOKING (BOOKING MANAGERS)
+
+A Booking Manager must be able to book desks for several team members, on several desks and several days, in one action. Today this has to be done one booking at a time.
+
+This builds on the restriction engine (Steps 9–14). Do not start it until those steps work.
+
+### Who can use it
+
+- Booking Manager: only for occupants they are delegated for (`canBookForUser` per occupant).
+- System Admin: any active employee.
+- Facility Admin: occupants on sites they administer, if they already have delegated booking rights there.
+- Standard User: never. The server rejects the request even if the UI is bypassed.
+
+### Inputs
+
+Inside Book a Desk (and from the Floor Map when in bulk mode):
+
+- **Team members**: multi-select server-side typeahead over the directory (name, email, department), limited to the actor's delegation scope. Chips show who is selected. Never send the whole directory to the client.
+- **Desks**: multi-select, either by clicking several desks on the Floor Map or by ticking them in the Find Available Desks results. Desks may span one floor; spanning floors in the same site is acceptable if simple.
+- **Days**: multiple dates, picked individually on a calendar and/or as a date range with chosen weekdays (e.g. "Mon–Thu, 12–23 Oct").
+- **Time**: one start/end time for the whole batch, within site operating hours, in the site timezone.
+
+### Pairing people with desks
+
+- The number of desks must be at least the number of team members.
+- Default pairing: each person keeps the same desk on every selected day, auto-paired in the order selected.
+- The manager can change any pairing in a review grid (person × day → desk) before submitting.
+
+### Preview before booking
+
+Before anything is written, show a preview grid with one row per (team member, day, desk):
+
+- ✓ bookable
+- ✗ not bookable, with the domain reason from `evaluateDeskEligibility`, e.g. "Desk 4.45 is restricted to Technology on Wednesdays." or "Priya already has a booking on 14 Oct 09:00–17:00."
+
+The preview uses the same eligibility service as single bookings, evaluated for each **occupant**, not the manager. The manager can remove failing rows or change their desk, then confirm.
+
+### Server behaviour
+
+- One mutation, e.g. `booking.createBatch`, taking occupant IDs, desk IDs, dates, time and the pairing.
+- Resolve the actor from the session. Re-check authorization for every occupant and eligibility, desk conflicts and occupant double-booking for every row inside one transaction, immediately before writing.
+- All-or-nothing: if any row fails at write time (e.g. someone else just took the desk), write nothing and return the failing rows with reasons so the manager can fix them and resubmit.
+- Each row is a normal `Booking` (`occupantUserId` = team member, `createdByUserId` = manager). Add a nullable `batchId` to group them, as an additive migration, so the batch can be shown and cancelled together.
+- Enforce a server-side cap on rows per request (a named constant, e.g. 200) and return a clear message when it's exceeded.
+
+### After booking
+
+- Show a summary: "12 bookings created for 4 team members across 3 days."
+- Each team member sees their bookings in My Bookings as usual.
+- The manager can cancel a single booking or the whole batch, with confirmation, subject to `canCancelBooking`.
+
+---
+
 # 33. IMPORTANT IMPLEMENTATION RULES
 
 Do not create fake functionality.
@@ -1293,6 +1346,9 @@ Connect restriction information to the normal Floor Map desk sidebar.
 
 ## STEP 15
 Test the complete flow.
+
+## STEP 16
+Implement bulk team booking for Booking Managers (§32A): multi-occupant, multi-desk, multi-day preview and transactional batch create.
 
 Do not jump ahead if the previous step is not functional.
 
@@ -1475,6 +1531,24 @@ Expected:
 
 desk no longer appears.
 
+### TEST 10 — Bulk team booking
+
+Booking Manager Sarah is delegated for Bob, Chen and Priya.
+
+Sarah selects Bob, Chen and Priya, desks 4.10, 4.11 and 4.12, and Tue + Wed next week, 09:00–17:00.
+
+Desk 4.12 is restricted to Technology on Wednesdays and Priya is not in Technology.
+
+Expected:
+
+- preview shows 6 rows; Priya / Wed / 4.12 fails with the restriction message
+- Sarah moves Priya's Wednesday to another eligible desk, or removes the row
+- confirm creates the bookings in one transaction
+- every booking has occupant = team member, createdBy = Sarah, same batchId
+- refresh: bookings persist and appear in each person's My Bookings
+- Sarah tries to include Dan, whom she is not delegated for: server rejects it
+- a Standard User calling the batch mutation directly gets 403
+
 ---
 
 # 36. DEFINITION OF DONE
@@ -1504,6 +1578,8 @@ Editing Platform
 → see restriction and shift information
 → return to Editing Platform
 → delete/reposition desk successfully
+
+Step 16 (bulk team booking) is done when TEST 10 passes end-to-end.
 
 That is the scope of this task.
 

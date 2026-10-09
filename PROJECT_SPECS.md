@@ -247,6 +247,7 @@ Capabilities within assigned sites/floors:
 - Manage supported floor objects
 - View relevant employees
 - Manage permitted employee floor access if allowed by policy
+- Configure Booking Manager delegates for their sites (§43)
 - View bookings in their scope
 - Cancel bookings in their scope
 
@@ -941,6 +942,16 @@ Examples:
 
 For v1, room placement/editing is in scope. Full meeting-room reservation functionality is not required unless already implemented.
 
+## 27.1 Planned — Meeting room management
+
+Meeting room management is planned for a later phase (§53, Phase 8). Detailed requirements will be added before it is picked up. Expected direction:
+
+- Meeting rooms are bookable room/space objects on the floor plan, with capacity, equipment and attributes.
+- Employees can find and book a room for a time slot from the Floor Map and a dedicated flow, with the same server-side conflict checks, site-timezone rules and authorization model as desks.
+- Admins manage rooms in the Editing Platform alongside desks.
+
+Do not start implementation until the detailed requirements are agreed.
+
 ---
 
 # 28. Neighborhoods / Areas
@@ -1127,6 +1138,17 @@ For Booking Manager/System Admin as permitted:
 - Occupant is searchable: a server-side typeahead over the employee directory (name, email, department). Only employees that exist in the system can be selected; the full directory is never sent to the client.
 - Restriction checks use the selected occupant
 - Guests are free text (they need not exist in the system) and may only be booked into desks that carry no people-based restriction at all — no department, assigned-occupant or custom block on any day, and not an assigned desk. Day-based "Anyone" shifts still apply. The server rejects a guest booking on any other desk with an explanatory message, and Find Available Desks / eligibility checks evaluate for the guest when that mode is selected.
+
+## 33.1 Bulk team booking (planned)
+
+Booking Managers (and System Admins) can book for several team members, on several desks and several days, in one action:
+
+- Select multiple team members (limited to the actor's delegation scope), multiple desks and multiple days, with one start/end time.
+- Each person keeps the same desk across the selected days by default; pairings can be adjusted.
+- A preview lists every (person, day, desk) row with ✓ or the reason it can't be booked, evaluated for each occupant with the central eligibility service.
+- The server re-validates every row in one transaction and creates all or none. Each row is a normal booking (occupant = team member, createdBy = manager), grouped by a batch ID so it can be viewed and cancelled together.
+
+Full detail: `tasks/desk-management.md` §32A.
 
 ---
 
@@ -1397,6 +1419,14 @@ DelegateAssignment
 - optional site/floor scope
 ```
 
+Who can configure delegates:
+
+- System Admin: any delegation, any site.
+- Facility Admin: only delegations scoped to a site they administer. The scope is required, so the delegation can never apply outside that site. They can add any active employee as a team member, because the delegation only lets the manager book at a site where the Facility Admin can already book for others. Changing someone's role (e.g. making them a Booking Manager) still follows the normal user-management rules (§41).
+- Booking Managers and Standard Users cannot configure delegation, including their own.
+
+The server checks this on every create/remove. Removing a delegation does not cancel existing bookings.
+
 When a delegated booking is created:
 
 ```text
@@ -1642,7 +1672,7 @@ Unless specifically requested later, do not build:
 - Large analytics/reporting suite
 - Mobile app
 - Social features
-- Full meeting-room reservation platform
+- Full meeting-room reservation platform (planned separately, see §27.1)
 
 Rooms/spaces may exist as floor-map objects without implementing a full room-booking system.
 
@@ -1683,6 +1713,7 @@ Build in vertical, testable slices.
 - Shifts
 - Multiple assignments per desk
 - Advance booking window
+- Bulk team booking for Booking Managers (§33.1), once the restriction engine is in place
 
 ## Phase 5 — Employee booking
 
@@ -1707,6 +1738,10 @@ Build in vertical, testable slices.
 - Rooms/spaces
 - Neighborhoods
 - Floor labels
+
+## Phase 8 — Meeting rooms (planned)
+
+- Meeting room management and booking (§27.1); requirements to follow
 
 ---
 

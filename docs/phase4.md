@@ -83,6 +83,7 @@ They can:
 - view users associated with their facilities
 - view bookings on their floors
 - cancel bookings within the facilities they administer
+- assign team members to Booking Managers (delegates), scoped to the facilities they administer
 
 They must NOT be able to modify facilities/floors outside their permission scope.
 
@@ -826,6 +827,29 @@ CANCELLED
 COMPLETED
 
 ==================================================
+20A. BULK TEAM BOOKING (BOOKING MANAGERS)
+==================================================
+
+Booking Managers must be able to book for several team members at once instead of one booking at a time.
+
+In one action the manager selects:
+
+- multiple team members (server-side typeahead, limited to the people they are delegated for)
+- multiple desks (from the Floor Map or Find Available Desks results)
+- multiple days (individual dates and/or a date range with chosen weekdays)
+- one start/end time for the batch, in the site timezone
+
+By default each person keeps the same desk across all selected days; the manager can change pairings before submitting.
+
+Before writing, show a preview of every (person, day, desk) row with ✓ or the actionable restriction/conflict reason. Eligibility is evaluated for each OCCUPANT using the same central eligibility service as single bookings.
+
+The server re-validates authorization, restrictions and conflicts for every row in one transaction and creates all rows or none. Each row is a normal booking with occupant = team member and createdBy = manager, grouped by a nullable batchId so the batch can be viewed and cancelled together. Enforce a server-side cap on rows per request.
+
+Standard Users cannot use bulk booking.
+
+Full detail and acceptance test: tasks/desk-management.md §32A and TEST 10.
+
+==================================================
 21. USERS PAGE
 ==================================================
 
@@ -1227,7 +1251,7 @@ PHASE 7
 Upgrade booking UI and selected-desk information panel.
 
 PHASE 8
-Implement admin/delegated booking management and cancellation permissions.
+Implement admin/delegated booking management and cancellation permissions, then bulk team booking for Booking Managers (section 20A).
 
 PHASE 9
 Test the complete flow.
@@ -1318,6 +1342,16 @@ Booking Manager attempts to book a restricted desk for an ineligible user.
 Expected:
 booking fails based on occupant's department, not Booking Manager's department.
 
+CASE 17
+Booking Manager books 3 team members onto 3 desks for 2 days in one action.
+Expected:
+preview lists 6 rows; any ineligible row shows the occupant-based reason; confirming creates all valid rows in one transaction with occupant = team member, createdBy = Booking Manager.
+
+CASE 18
+Booking Manager includes a person they are not delegated for in a bulk booking.
+Expected:
+server rejects the request.
+
 CASE 16
 Select a desk on Floor Map.
 Expected:
@@ -1358,7 +1392,7 @@ BOOKINGS connect an occupant to a desk and time.
 
 ADMINS configure and control the system.
 
-BOOKING MANAGERS can make bookings on behalf of people.
+BOOKING MANAGERS can make bookings on behalf of people, including several people, desks and days in one action.
 
 STANDARD USERS can only manage their own bookings.
 
