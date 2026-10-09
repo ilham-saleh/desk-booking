@@ -1258,6 +1258,29 @@ On the Floor Map desk panel every employee can see who holds a desk for the sele
 
 All checks must be server-side.
 
+## 38.1 Desk watch
+
+An employee viewing a desk that someone else has booked on the selected date can choose **Notify me if it frees up**.
+
+- A watch is for one desk on one site-local date. It can only be created when the desk has a booking that day that isn't the viewer's own, the date hasn't passed, and the viewer would be eligible to book that desk on that date.
+- When a booking on that desk and date is cancelled, auto-cancelled or ended early, every watcher gets an in-app notification with the freed time, linking to the desk on the Floor Map. The person who released the booking is not notified.
+- Watches are one-shot: they fire once, then stop. Watching again re-arms them.
+- Each person can have up to 20 active watches. Active watches are listed in My Bookings, where they can be stopped.
+
+## 38.2 Notifications and reminders
+
+Notifications are in-app only for now: a bell in the top bar with an unread count, the newest notifications, mark-as-read and mark-all-as-read. Each notification links to where the person can act. Email delivery may be added later once a sender is agreed.
+
+Notification types:
+
+- **Desk freed up** (desk watch, §38.1).
+- **Check-in reminder**: for a booking on a desk that requires check-in and hasn't been checked in, sent once, 30 minutes before the check-in deadline, while the booking is still running. Guest bookings remind the person who booked them.
+- **Booking released**: a booking that missed its check-in deadline was auto-cancelled.
+
+Check-in deadline: a booking on a desk that requires check-in must be checked in within 1 hour after it starts. If it was booked after its start time (e.g. the current slot), the hour runs from when it was booked. Otherwise it is auto-cancelled and the desk is released for the rest of the booking.
+
+Notifications are private to their recipient, and times are shown in the site's time zone.
+
 ---
 
 # 39. Users Page — Combined Employee + Permission Management

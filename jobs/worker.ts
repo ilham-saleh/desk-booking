@@ -3,8 +3,10 @@ import { PgBoss } from "pg-boss";
 
 import { PrismaClient } from "@/generated/prisma/client";
 import { runCheckInAutoCancelSweep } from "@/server/booking/auto-cancel";
+import { runCheckInReminderSweep } from "@/server/booking/check-in-reminder";
 
 const CHECK_IN_SWEEP_QUEUE = "booking.check-in-sweep";
+const CHECK_IN_REMINDER_QUEUE = "booking.check-in-reminder";
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -27,7 +29,15 @@ async function main() {
   });
   await boss.schedule(CHECK_IN_SWEEP_QUEUE, "*/5 * * * *", null, { tz: "Etc/UTC" });
   console.log("worker: check-in auto-cancel sweep scheduled every 5 minutes.");
-  console.log("Reminders and desk-watch alerts arrive in Phase 5.");
+
+  await boss.createQueue(CHECK_IN_REMINDER_QUEUE);
+  await boss.work(CHECK_IN_REMINDER_QUEUE, async () => {
+    const reminded = await runCheckInReminderSweep(db);
+    if (reminded > 0) console.log(`worker: sent ${reminded} check-in reminder(s).`);
+  });
+  await boss.schedule(CHECK_IN_REMINDER_QUEUE, "*/5 * * * *", null, { tz: "Etc/UTC" });
+  console.log("worker: check-in reminders scheduled every 5 minutes.");
+  // Desk-watch alerts aren't scheduled: they're sent when a booking is cancelled, auto-cancelled or ended early.
 
   process.on("SIGTERM", () => void boss.stop());
 }

@@ -6,7 +6,7 @@ import { runCheckInAutoCancelSweep } from "@/server/booking/auto-cancel";
 
 /**
  * Exercises runCheckInAutoCancelSweep (CLAUDE.md rule 6 / spec section C:
- * not checked in one hour before start -> auto-cancel + release the desk)
+ * not checked in within an hour after start -> auto-cancel + release the desk)
  * directly against a real Postgres database. Run against DATABASE_URL_TEST
  * — migrations must already be applied there.
  */
@@ -49,6 +49,8 @@ async function makeBooking(opts: {
   endAt: Date;
   status?: "CONFIRMED" | "CHECKED_IN";
   checkedInAt?: Date;
+  /** Defaults to well before the start, as for a booking made in advance. */
+  createdAt?: Date;
 }) {
   return db.booking.create({
     data: {
@@ -61,6 +63,7 @@ async function makeBooking(opts: {
       endAt: opts.endAt,
       status: opts.status ?? "CONFIRMED",
       checkedInAt: opts.checkedInAt ?? null,
+      createdAt: opts.createdAt ?? new Date(opts.startAt.getTime() - 24 * 60 * 60_000),
     },
   });
 }
@@ -95,8 +98,8 @@ describe("runCheckInAutoCancelSweep", () => {
       organizationId: orgA.org.id,
       deskId: desk.id,
       userId: user.id,
-      startAt: new Date(Date.now() + 30 * 60_000), // 30 min out — inside the 60 min deadline window
-      endAt: new Date(Date.now() + 90 * 60_000),
+      startAt: new Date(Date.now() - 61 * 60_000), // started 61 min ago — past the one-hour deadline
+      endAt: new Date(Date.now() + 60 * 60_000),
     });
 
     await runCheckInAutoCancelSweep(db);
@@ -113,21 +116,45 @@ describe("runCheckInAutoCancelSweep", () => {
     expect(notification).not.toBeNull();
   });
 
-  it("leaves alone a booking still inside the check-in deadline window", async () => {
+  it("leaves alone a booking still inside its first hour", async () => {
     const desk = await db.desk.create({ data: { organizationId: orgA.org.id, floorId: orgA.floor.id, number: "S2", x: 1, y: 1, requiresCheckIn: true } });
     const user = await makeUser(orgA.org.id);
     const booking = await makeBooking({
       organizationId: orgA.org.id,
       deskId: desk.id,
       userId: user.id,
-      startAt: new Date(Date.now() + 3 * 60 * 60_000), // 3h out — outside the deadline window
+      startAt: new Date(Date.now() - 45 * 60_000), // started 45 min ago — 15 min left to check in
+      endAt: new Date(Date.now() + 2 * 60 * 60_000),
+    });
+    const upcoming = await makeBooking({
+      organizationId: orgA.org.id,
+      deskId: desk.id,
+      userId: (await makeUser(orgA.org.id)).id,
+      startAt: new Date(Date.now() + 3 * 60 * 60_000),
       endAt: new Date(Date.now() + 4 * 60 * 60_000),
     });
 
     await runCheckInAutoCancelSweep(db);
 
-    const updated = await db.booking.findUniqueOrThrow({ where: { id: booking.id } });
-    expect(updated.status).toBe("CONFIRMED");
+    expect((await db.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe("CONFIRMED");
+    expect((await db.booking.findUniqueOrThrow({ where: { id: upcoming.id } })).status).toBe("CONFIRMED");
+  });
+
+  it("gives a booking made after its start a full hour from when it was made", async () => {
+    const desk = await db.desk.create({ data: { organizationId: orgA.org.id, floorId: orgA.floor.id, number: "S6", x: 4, y: 4, requiresCheckIn: true } });
+    const user = await makeUser(orgA.org.id);
+    const booking = await makeBooking({
+      organizationId: orgA.org.id,
+      deskId: desk.id,
+      userId: user.id,
+      startAt: new Date(Date.now() - 70 * 60_000), // the slot started 70 min ago…
+      endAt: new Date(Date.now() + 60 * 60_000),
+      createdAt: new Date(Date.now() - 10 * 60_000), // …but it was only booked 10 min ago
+    });
+
+    await runCheckInAutoCancelSweep(db);
+
+    expect((await db.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe("CONFIRMED");
   });
 
   it("leaves alone a booking that's already checked in", async () => {
@@ -156,7 +183,7 @@ describe("runCheckInAutoCancelSweep", () => {
       organizationId: orgA.org.id,
       deskId: desk.id,
       userId: user.id,
-      startAt: new Date(Date.now() - 60 * 60_000),
+      startAt: new Date(Date.now() - 2 * 60 * 60_000),
       endAt: new Date(Date.now() + 60 * 60_000),
     });
 
@@ -173,8 +200,8 @@ describe("runCheckInAutoCancelSweep", () => {
       organizationId: orgB.org.id,
       deskId: desk.id,
       userId: user.id,
-      startAt: new Date(Date.now() + 10 * 60_000),
-      endAt: new Date(Date.now() + 70 * 60_000),
+      startAt: new Date(Date.now() - 65 * 60_000),
+      endAt: new Date(Date.now() + 30 * 60_000),
     });
 
     await runCheckInAutoCancelSweep(db);

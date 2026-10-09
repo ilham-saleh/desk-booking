@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Info, Lock } from "lucide-react";
+import { AlertTriangle, Bell, BellRing, CheckCircle2, Info, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 import type { Role } from "@/generated/prisma/enums";
@@ -186,6 +186,9 @@ export function DeskPanel({
                 {blockingBookings.map((booking) => (
                   <BookingCard key={booking.id} booking={booking} site={site} desk={desk} now={now} onSettled={onMutationSettled} />
                 ))}
+                {!blockingBookings.some((b) => b.isOwn) && viewedDate >= todayInTimeZone(site.timeZone) && (
+                  <WatchDeskControl desk={desk} date={viewedDate} />
+                )}
               </SidePanelSection>
             )}
 
@@ -265,6 +268,52 @@ export function DeskPanel({
         )}
       </SidePanelBody>
     </SidePanel>
+  );
+}
+
+/** "Notify me if it frees up" for a desk someone else holds on the viewed date — see deskWatch router. */
+function WatchDeskControl({ desk, date }: { desk: DeskPanelDesk; date: string }) {
+  const utils = api.useUtils();
+  const status = api.deskWatch.status.useQuery({ deskId: desk.id, date });
+  const refresh = () => {
+    void utils.deskWatch.status.invalidate({ deskId: desk.id, date });
+    void utils.deskWatch.listMine.invalidate();
+  };
+  const watch = api.deskWatch.create.useMutation({
+    onSuccess: () => {
+      toast.success(`We'll let you know if Desk ${desk.number} frees up on ${formatDisplayDate(date)}.`);
+      refresh();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  const unwatch = api.deskWatch.remove.useMutation({
+    onSuccess: () => {
+      toast.success(`Stopped watching Desk ${desk.number}.`);
+      refresh();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  if (status.isPending) return <Skeleton className="h-9 w-full" />;
+
+  if (status.data?.watching) {
+    return (
+      <div role="status" className="flex items-center justify-between gap-3 rounded-xl border p-3">
+        <p className="text-foreground flex items-start gap-2 text-sm">
+          <BellRing aria-hidden className="text-navy mt-0.5 size-4 shrink-0" />
+          You&apos;ll be notified if it frees up on {formatDisplayDate(date)}.
+        </p>
+        <Button variant="ghost" size="sm" disabled={unwatch.isPending} onClick={() => unwatch.mutate({ deskId: desk.id, date })}>
+          {unwatch.isPending ? "Stopping…" : "Stop watching"}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="outline" className="w-full" disabled={watch.isPending} onClick={() => watch.mutate({ deskId: desk.id, date })}>
+      {watch.isPending ? <Spinner /> : <Bell aria-hidden />} Notify me if it frees up
+    </Button>
   );
 }
 

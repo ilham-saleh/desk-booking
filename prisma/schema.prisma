@@ -387,6 +387,8 @@ model Booking {
   endAt            DateTime // UTC instant — rule 3
   status           BookingStatus @default(CONFIRMED)
   checkedInAt      DateTime?
+  /// Set when the check-in reminder was sent, so the worker sends it once.
+  checkInReminderSentAt DateTime?
   cancelledAt      DateTime?
   cancelledById    String?
   recurrenceRule   Json? // Future: for repeating bookings (RFC 5545 RRULE format, optional)
@@ -403,11 +405,15 @@ model Booking {
   @@map("bookings")
 }
 
+/// "Notify me if this desk frees up on this date." One-shot: the first
+/// cancellation / early release of a booking that day sets notifiedAt.
 model DeskWatch {
   id             String    @id @default(cuid())
   organizationId String
   userId         String
   deskId         String
+  /// Site-local calendar date being watched (same convention as Booking.date).
+  date           DateTime  @db.Date
   createdAt      DateTime  @default(now())
   notifiedAt     DateTime?
 
@@ -415,7 +421,8 @@ model DeskWatch {
   user         User         @relation(fields: [userId], references: [id])
   desk         Desk         @relation(fields: [deskId], references: [id])
 
-  @@unique([userId, deskId])
+  @@unique([userId, deskId, date])
+  @@index([deskId, date])
   @@map("desk_watches")
 }
 
@@ -431,6 +438,8 @@ model Notification {
   organization Organization @relation(fields: [organizationId], references: [id])
   user         User         @relation(fields: [userId], references: [id])
 
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
   @@map("notifications")
 }
 

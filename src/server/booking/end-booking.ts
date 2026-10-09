@@ -4,6 +4,7 @@ import type { EndBookingInput } from "@/lib/schemas/booking";
 import { BookingStatus } from "@/generated/prisma/enums";
 import type { Session } from "@/server/auth/roles";
 import { assertCanManageBooking } from "@/server/auth/authorization";
+import { notifyDeskWatchers } from "@/server/notifications/desk-watch";
 import type { ScopedDb } from "@/server/tenancy";
 
 /**
@@ -64,6 +65,8 @@ export async function endBookingEarly(
       after: { status: BookingStatus.COMPLETED, endedByOwner: booking.userId === actorId || booking.bookedById === actorId },
     },
   });
+
+  await notifyDeskWatchers(ctx.db, completed, { releasedEarly: true, actorId });
 
   return completed;
 }

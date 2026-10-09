@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDisplayDate } from "@/lib/dates";
 import { StatusBadge } from "@/components/booking/desk-panel";
+import { DeskWatchesCard } from "@/components/booking/desk-watches-card";
 
 type When = "upcoming" | "past";
 
@@ -183,6 +184,8 @@ export default function BookingsPage() {
             </Table>
           )}
       </Card>
+
+      {tab === "upcoming" && <DeskWatchesCard />}
     </PageContainer>
   );
 }
