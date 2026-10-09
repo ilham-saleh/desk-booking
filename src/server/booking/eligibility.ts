@@ -2,7 +2,6 @@ import {
   WEEKDAY_LONG,
   calendarDaysBetween,
   dayOfWeekForDate,
-  formatDays,
   matchesRules,
   type DeskRestrictionMode,
   type RuleLike,
@@ -17,12 +16,15 @@ import {
  * person creating the booking (§19).
  */
 
+/**
+ * Shifts are day-based: admins pick weekdays and occupants choose their own
+ * time within site operating hours. (AvailabilityShift's legacy time-window
+ * columns are not enforced.)
+ */
 export interface EligibilityShift {
   id: string;
   name: string;
   daysOfWeek: number[];
-  startTimeMinutes: number | null;
-  endTimeMinutes: number | null;
 }
 
 export interface EligibilityRestriction {
@@ -62,16 +64,11 @@ export interface EligibilityInput {
   date: string;
   /** Today's site-local calendar date, YYYY-MM-DD — for the advance-booking window. */
   today: string;
-  /** Requested slot (minutes from midnight, site-local) — checked against a shift's optional time window. */
-  startMinutes?: number;
-  endMinutes?: number;
 }
 
 export type EligibilityStatus =
   | "ELIGIBLE"
   | "DESK_INACTIVE"
-  | "NO_SHIFT_FOR_DAY"
-  | "OUTSIDE_SHIFT_HOURS"
   | "NOT_ASSIGNED_OCCUPANT"
   | "DEPARTMENT_MISMATCH"
   | "RESTRICTION_MISMATCH"
@@ -120,33 +117,12 @@ export function evaluateDeskEligibility(input: EligibilityInput): EligibilityRes
     );
   }
 
-  // No restriction blocks at all: the desk is open to anyone on any working day.
-  if (desk.restrictionAssignments.length === 0) {
-    return { eligible: true, status: "ELIGIBLE", reason: null, assignment: null, dayOfWeek };
-  }
-
+  // Restriction blocks only narrow the days their shift covers. A day no block
+  // covers (or a desk with no blocks at all) is open to anyone — site operating
+  // days and hours are enforced separately by booking validation.
   const assignment = desk.restrictionAssignments.find((a) => a.shift.daysOfWeek.includes(dayOfWeek));
   if (!assignment) {
-    const available = [...new Set(desk.restrictionAssignments.flatMap((a) => a.shift.daysOfWeek))];
-    return fail(
-      "NO_SHIFT_FOR_DAY",
-      `Desk ${desk.number} isn't available on ${plural(dayOfWeek)}. It can be booked on ${formatDays(available)}.`,
-    );
-  }
-
-  const { shift } = assignment;
-  if (
-    shift.startTimeMinutes != null &&
-    shift.endTimeMinutes != null &&
-    input.startMinutes !== undefined &&
-    input.endMinutes !== undefined &&
-    (input.startMinutes < shift.startTimeMinutes || input.endMinutes > shift.endTimeMinutes)
-  ) {
-    return fail(
-      "OUTSIDE_SHIFT_HOURS",
-      `On ${plural(dayOfWeek)} desk ${desk.number} is only bookable between ${formatMinutes(shift.startTimeMinutes)} and ${formatMinutes(shift.endTimeMinutes)}.`,
-      assignment,
-    );
+    return { eligible: true, status: "ELIGIBLE", reason: null, assignment: null, dayOfWeek };
   }
 
   if (assignment.advanceBookingWindowDays != null) {
@@ -211,10 +187,6 @@ export function evaluateDeskEligibility(input: EligibilityInput): EligibilityRes
 /** A desk a guest may be booked into: no assigned occupant and no restriction block other than "Anyone". */
 export function isGuestBookable(desk: Pick<EligibilityDesk, "assignedOccupantId" | "restrictionAssignments">): boolean {
   return desk.assignedOccupantId === null && desk.restrictionAssignments.every((a) => a.restrictionMode === "ANYONE");
-}
-
-function formatMinutes(minutes: number): string {
-  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 /** The Prisma `include` every eligibility caller needs on a Desk. */

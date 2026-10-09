@@ -611,7 +611,7 @@ function AdvanceWindowForm({ initial, onSave, onCancel }: { initial: number | nu
     <>
       <DialogHeader>
         <DialogTitle>Advance booking window</DialogTitle>
-        <DialogDescription>How far ahead this desk can be booked on the days covered by this restriction block. Leave empty to use the site default.</DialogDescription>
+        <DialogDescription>How far ahead this desk can be booked on the days covered by this restriction block. Leave empty for no limit.</DialogDescription>
       </DialogHeader>
       <div className="flex items-center gap-2">
         <Label htmlFor="advance-days" className="whitespace-nowrap">

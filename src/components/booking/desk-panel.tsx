@@ -230,6 +230,10 @@ export function DeskPanel({
                   </li>
                 );
               })}
+              {/* Days no block covers are open to everyone (see evaluateDeskEligibility). */}
+              <li>
+                <AudienceRow initial="A" title="Anyone can book" detail="All other days" />
+              </li>
             </ul>
           )}
         </SidePanelSection>

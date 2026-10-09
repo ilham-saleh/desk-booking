@@ -6,7 +6,7 @@ export const departmentCreateInputSchema = z.object({
 
 export type DepartmentCreateInput = z.infer<typeof departmentCreateInputSchema>;
 
-export const restrictionFieldTypeSchema = z.enum(["DEPARTMENT", "EMAIL", "USER"]);
+export const restrictionFieldTypeSchema = z.enum(["DEPARTMENT", "EMAIL", "USER", "JOB_TITLE"]);
 export const restrictionOperatorSchema = z.enum(["IS", "IS_NOT", "IS_ANY_OF", "IS_NOT_ANY_OF", "IS_EMPTY", "IS_NOT_EMPTY"]);
 export const ruleConnectorSchema = z.enum(["AND", "OR"]);
 

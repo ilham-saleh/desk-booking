@@ -751,7 +751,7 @@ Minimum rule fields:
 - Department
 - Email
 - User
-- Job title if available from Entra
+- Job title (from Entra)
 
 The implementation should be extensible to additional Entra profile fields later.
 
@@ -828,6 +828,8 @@ AvailabilityShift
 
 Do not hardcode every possible combination if a reusable shift model is cleaner.
 
+Admins pick days only. The model's optional start/end time is neither exposed in the shift editor nor enforced: users choose their own booking time within site operating hours.
+
 ---
 
 # 24. Multiple Restriction/Shift Assignments Per Desk
@@ -866,6 +868,8 @@ Desk
 
 A desk must support multiple assignments.
 
+Assignments only narrow the days their shift covers. A day that no assignment covers is open to anyone (subject to site operating days/hours). For example, with "Anyone: Mon & Wed" and "Engineering: Thursday Only", Tuesday and Friday remain bookable by everyone.
+
 ---
 
 # 25. Advance Booking Window
@@ -880,7 +884,7 @@ Users can book this desk up to 30 days in advance.
 
 Store this as structured data.
 
-If not configured, fall back to site/system default.
+If not configured, there is no limit: the desk can be booked any distance ahead.
 
 ---
 
