@@ -55,7 +55,7 @@ export const bookingRouter = createTRPCRouter({
     // Restricted state is per occupant: the signed-in user by default, or — for
     // someone allowed to book on behalf at this site — the chosen employee or a guest.
     const viewerId = ctx.session.user.id;
-    let subject: { id: string; email: string; department: string | null } | null = null;
+    let subject: { id: string; email: string; department: string | null; title: string | null } | null = null;
     if (input.forGuest) {
       if (!(await canBookForUser(ctx, null, floor.siteId))) {
         throw new TRPCError({ code: "FORBIDDEN", message: `You don't have permission to book for guests at ${floor.site.name}.` });
@@ -65,7 +65,7 @@ export const bookingRouter = createTRPCRouter({
       if (!(await canBookForUser(ctx, occupantId, floor.siteId))) {
         throw new TRPCError({ code: "FORBIDDEN", message: "You can only view availability for yourself." });
       }
-      subject = await ctx.db.user.findFirst({ where: { id: occupantId }, select: { id: true, email: true, department: true } });
+      subject = await ctx.db.user.findFirst({ where: { id: occupantId }, select: { id: true, email: true, department: true, title: true } });
       if (!subject) throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
     }
     const today = todayInTimeZone(floor.site.timeZone);
@@ -104,8 +104,6 @@ export const bookingRouter = createTRPCRouter({
         occupant: subject,
         date: input.date,
         today,
-        startMinutes: input.startMinutes,
-        endMinutes: input.endMinutes,
       });
       return {
         deskId: desk.id,

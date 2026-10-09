@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { calendarDaysBetween, dayOfWeekForDate, describeRules, findOverlappingDays, formatDays, matchesRules } from "@/lib/restrictions";
 import { evaluateDeskEligibility, type EligibilityDesk } from "@/server/booking/eligibility";
 
-const engineering = { id: "u1", email: "eng@example.test", department: "Engineering" };
-const sales = { id: "u2", email: "sales@example.test", department: "Sales" };
-const noDepartment = { id: "u3", email: "new@example.test", department: null };
+const engineering = { id: "u1", email: "eng@example.test", department: "Engineering", title: "Senior Software Engineer" };
+const sales = { id: "u2", email: "sales@example.test", department: "Sales", title: "Account Executive" };
+const noDepartment = { id: "u3", email: "new@example.test", department: null, title: null };
 
 describe("matchesRules", () => {
   it("matches everyone when there are no rules", () => {
@@ -28,7 +28,7 @@ describe("matchesRules", () => {
     // Group 1: Sales AND email != sales@ → sales fails group 1; Group 2: user u1 → engineering matches.
     expect(matchesRules(rules, sales)).toBe(false);
     expect(matchesRules(rules, engineering)).toBe(true);
-    expect(matchesRules(rules, { id: "u9", email: "other@example.test", department: "Sales" })).toBe(true);
+    expect(matchesRules(rules, { id: "u9", email: "other@example.test", department: "Sales", title: null })).toBe(true);
   });
 
   it("supports is empty / is not empty", () => {
@@ -39,6 +39,27 @@ describe("matchesRules", () => {
 
   it("tolerates legacy bare-string values", () => {
     expect(matchesRules([{ fieldType: "DEPARTMENT", operator: "IS", value: "Sales" }], sales)).toBe(true);
+  });
+
+  it("matches job titles case-insensitively and treats a blank title as empty", () => {
+    const rules = [{ fieldType: "JOB_TITLE" as const, operator: "IS_ANY_OF" as const, value: ["senior software engineer", "Staff Engineer"] }];
+    expect(matchesRules(rules, engineering)).toBe(true);
+    expect(matchesRules(rules, sales)).toBe(false);
+    expect(matchesRules(rules, noDepartment)).toBe(false);
+
+    expect(matchesRules([{ fieldType: "JOB_TITLE", operator: "IS_NOT", value: ["Account Executive"] }], sales)).toBe(false);
+    expect(matchesRules([{ fieldType: "JOB_TITLE", operator: "IS_EMPTY", value: [] }], noDepartment)).toBe(true);
+    expect(matchesRules([{ fieldType: "JOB_TITLE", operator: "IS_EMPTY", value: [] }], { ...sales, title: "  " })).toBe(true);
+    expect(matchesRules([{ fieldType: "JOB_TITLE", operator: "IS_NOT_EMPTY", value: [] }], sales)).toBe(true);
+  });
+
+  it("combines job title with department using AND", () => {
+    const rules = [
+      { fieldType: "DEPARTMENT" as const, operator: "IS" as const, value: ["Engineering"], sortOrder: 0 },
+      { fieldType: "JOB_TITLE" as const, operator: "IS" as const, value: ["Senior Software Engineer"], connector: "AND" as const, sortOrder: 1 },
+    ];
+    expect(matchesRules(rules, engineering)).toBe(true);
+    expect(matchesRules(rules, { ...engineering, title: "Graduate Engineer" })).toBe(false);
   });
 });
 
@@ -64,7 +85,7 @@ describe("helpers", () => {
 });
 
 describe("evaluateDeskEligibility", () => {
-  const shift = (id: string, name: string, daysOfWeek: number[]) => ({ id, name, daysOfWeek, startTimeMinutes: null, endTimeMinutes: null });
+  const shift = (id: string, name: string, daysOfWeek: number[]) => ({ id, name, daysOfWeek });
   const technology = {
     id: "r1",
     name: "Technology",
@@ -115,11 +136,33 @@ describe("evaluateDeskEligibility", () => {
     expect(rejected.reason).toBe("Desk 2.21 is restricted to the Sales, Marketing departments on Thursdays.");
   });
 
-  it("reports days with no shift and the advance-booking window", () => {
-    const saturday = evaluateDeskEligibility({ desk, occupant: sales, date: "2026-09-19", today });
-    expect(saturday.status).toBe("NO_SHIFT_FOR_DAY");
-    expect(saturday.reason).toContain("Mon, Tue, Wed, Thu, Fri");
+  it("leaves days no block covers open to anyone", () => {
+    const saturday = evaluateDeskEligibility({ desk, occupant: noDepartment, date: "2026-09-19", today });
+    expect(saturday.eligible).toBe(true);
+    expect(saturday.assignment).toBeNull();
+  });
 
+  it("only narrows the covered days: Mon+Wed anyone, Thu one department, Tue/Fri open", () => {
+    const partial: EligibilityDesk = {
+      ...desk,
+      number: "2.04",
+      restrictionAssignments: [
+        block({ id: "b1", restrictionMode: "ANYONE", shift: shift("s5", "Mon & Wed", [1, 3]) }),
+        block({ id: "b2", restrictionMode: "DEPARTMENT", departmentNames: ["Engineering"], shift: shift("s6", "Thursday Only", [4]) }),
+      ],
+    };
+    const check = (occupant: typeof sales, date: string) => evaluateDeskEligibility({ desk: partial, occupant, date, today });
+    for (const date of ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-18"]) {
+      expect(check(sales, date).eligible).toBe(true); // Mon, Tue, Wed, Fri
+    }
+    expect(check(sales, "2026-09-15").assignment).toBeNull(); // Tuesday: no block applies
+    expect(check(engineering, "2026-09-17").eligible).toBe(true); // Thursday: Engineering admitted
+    const thursday = check(sales, "2026-09-17");
+    expect(thursday.status).toBe("DEPARTMENT_MISMATCH");
+    expect(thursday.reason).toBe("Desk 2.04 is restricted to the Engineering department on Thursdays.");
+  });
+
+  it("enforces the advance-booking window", () => {
     const farTuesday = evaluateDeskEligibility({ desk, occupant: sales, date: "2026-10-13", today });
     expect(farTuesday.status).toBe("OUTSIDE_ADVANCE_WINDOW");
     expect(farTuesday.reason).toContain("7 days in advance");

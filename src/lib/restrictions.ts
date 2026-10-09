@@ -5,7 +5,7 @@
  * this module is the single place the rule semantics are defined.
  */
 
-export type RuleFieldType = "DEPARTMENT" | "EMAIL" | "USER";
+export type RuleFieldType = "DEPARTMENT" | "EMAIL" | "USER" | "JOB_TITLE";
 export type RuleOperator = "IS" | "IS_NOT" | "IS_ANY_OF" | "IS_NOT_ANY_OF" | "IS_EMPTY" | "IS_NOT_EMPTY";
 export type RuleConnector = "AND" | "OR";
 export type DeskRestrictionMode = "ANYONE" | "ASSIGNED_OCCUPANTS" | "DEPARTMENT" | "CUSTOM";
@@ -19,17 +19,19 @@ export interface RuleLike {
   sortOrder?: number | null;
 }
 
-/** The employee fields a rule can inspect. Department is matched by name (User.department). */
+/** The employee fields a rule can inspect. Department and job title are matched by name (User.department / User.title). */
 export interface RuleSubject {
   id: string;
   email: string;
   department: string | null;
+  title: string | null;
 }
 
 export const RULE_FIELD_LABELS: Record<RuleFieldType, string> = {
   DEPARTMENT: "Department",
   EMAIL: "Email",
   USER: "User",
+  JOB_TITLE: "Job title",
 };
 
 export const RULE_OPERATOR_LABELS: Record<RuleOperator, string> = {
@@ -42,7 +44,7 @@ export const RULE_OPERATOR_LABELS: Record<RuleOperator, string> = {
 };
 
 export const RULE_OPERATORS: RuleOperator[] = ["IS", "IS_NOT", "IS_ANY_OF", "IS_NOT_ANY_OF", "IS_EMPTY", "IS_NOT_EMPTY"];
-export const RULE_FIELD_TYPES: RuleFieldType[] = ["DEPARTMENT", "EMAIL", "USER"];
+export const RULE_FIELD_TYPES: RuleFieldType[] = ["DEPARTMENT", "JOB_TITLE", "EMAIL", "USER"];
 
 export const DESK_RESTRICTION_MODE_LABELS: Record<DeskRestrictionMode, string> = {
   ANYONE: "None (Any occupant)",
@@ -81,10 +83,14 @@ export function ruleValues(rule: RuleLike): string[] {
   return [];
 }
 
+const blankToNull = (value: string | null) => (value && value.trim().length > 0 ? value : null);
+
 function subjectFieldValue(subject: RuleSubject, field: RuleFieldType): string | null {
   switch (field) {
     case "DEPARTMENT":
-      return subject.department && subject.department.trim().length > 0 ? subject.department : null;
+      return blankToNull(subject.department);
+    case "JOB_TITLE":
+      return blankToNull(subject.title);
     case "EMAIL":
       return subject.email;
     case "USER":

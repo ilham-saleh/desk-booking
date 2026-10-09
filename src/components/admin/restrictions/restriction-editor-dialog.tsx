@@ -286,18 +286,32 @@ function RestrictionEditorForm({
   );
 }
 
-/** Searchable value picker: departments from real records, users/emails via server-side search. */
+const PLACEHOLDERS: Record<RuleFieldType, string> = {
+  DEPARTMENT: "Choose department(s)…",
+  JOB_TITLE: "Choose job title(s)…",
+  EMAIL: "Search by name or email…",
+  USER: "Search employees…",
+};
+
+/** Searchable value picker: departments and job titles from real records, users/emails via server-side search. */
 function RuleValuePicker({ rule, onChange }: { rule: RuleDraft; onChange: (value: string[]) => void }) {
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 200);
   const multi = isMulti(rule.operator);
+  const fixedList = rule.fieldType === "DEPARTMENT" || rule.fieldType === "JOB_TITLE";
 
   const departments = api.restriction.listDepartmentOptions.useQuery(undefined, { enabled: rule.fieldType === "DEPARTMENT" });
-  const userSearch = api.user.search.useQuery({ query: debouncedQuery, limit: 20 }, { enabled: rule.fieldType !== "DEPARTMENT", placeholderData: (prev) => prev });
+  const jobTitles = api.restriction.listJobTitleOptions.useQuery(undefined, { enabled: rule.fieldType === "JOB_TITLE" });
+  const userSearch = api.user.search.useQuery({ query: debouncedQuery, limit: 20 }, { enabled: !fixedList, placeholderData: (prev) => prev });
   const selectedUsers = api.user.search.useQuery({ ids: rule.value }, { enabled: rule.fieldType === "USER" && rule.value.length > 0 });
 
   const options: ComboboxOption[] = useMemo(() => {
     if (rule.fieldType === "DEPARTMENT") return (departments.data ?? []).map((name) => ({ value: name, label: name }));
+    if (rule.fieldType === "JOB_TITLE") {
+      // Keep saved titles selectable even if nobody holds them any more.
+      const titles = new Set([...(jobTitles.data ?? []), ...rule.value]);
+      return [...titles].map((title) => ({ value: title, label: title }));
+    }
     const users = userSearch.data ?? [];
     if (rule.fieldType === "EMAIL") {
       const byEmail = new Map<string, ComboboxOption>();
@@ -308,7 +322,7 @@ function RuleValuePicker({ rule, onChange }: { rule: RuleDraft; onChange: (value
     const byId = new Map<string, ComboboxOption>();
     for (const u of [...(selectedUsers.data ?? []), ...users]) byId.set(u.id, { value: u.id, label: u.name, description: u.email });
     return [...byId.values()];
-  }, [rule.fieldType, rule.value, departments.data, userSearch.data, selectedUsers.data]);
+  }, [rule.fieldType, rule.value, departments.data, jobTitles.data, userSearch.data, selectedUsers.data]);
 
   const handleChange = (values: string[]) => onChange(multi ? values : values.slice(-1));
 
@@ -318,11 +332,13 @@ function RuleValuePicker({ rule, onChange }: { rule: RuleDraft; onChange: (value
       values={rule.value}
       onChange={handleChange}
       options={options}
-      placeholder={rule.fieldType === "DEPARTMENT" ? "Choose department(s)…" : rule.fieldType === "EMAIL" ? "Search by name or email…" : "Search employees…"}
-      onSearchChange={rule.fieldType === "DEPARTMENT" ? undefined : setQuery}
-      loading={userSearch.isFetching}
+      placeholder={PLACEHOLDERS[rule.fieldType]}
+      onSearchChange={fixedList ? undefined : setQuery}
+      loading={fixedList ? departments.isFetching || jobTitles.isFetching : userSearch.isFetching}
       allowCustomValue={rule.fieldType === "EMAIL" ? looksLikeEmail : undefined}
-      emptyText={rule.fieldType === "DEPARTMENT" ? "No departments found" : query ? "No employees match" : "Type to search employees"}
+      emptyText={
+        rule.fieldType === "DEPARTMENT" ? "No departments found" : rule.fieldType === "JOB_TITLE" ? "No job titles found" : query ? "No employees match" : "Type to search employees"
+      }
     />
   );
 }

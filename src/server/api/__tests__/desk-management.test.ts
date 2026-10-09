@@ -446,4 +446,47 @@ describe("desk management", () => {
     expect(result.removedFromDesks).toBe(1);
     expect((await admin.desk.get({ deskId: desk.id })).restrictionAssignments).toHaveLength(0);
   });
+
+  it("restricts a desk by job title, evaluated for the occupant", async () => {
+    const admin = callerFor(superAdmin);
+    const mkTitled = (email: string, title: string | null) =>
+      db.user.create({ data: { organizationId: orgA.id, email, name: email, role: Role.STANDARD_USER, department: "Research", title } });
+    const analyst = await mkTitled("analyst@dm.test", "Research Analyst");
+    const associate = await mkTitled("associate@dm.test", "Associate");
+    await mkTitled("untitled@dm.test", null);
+
+    expect(await admin.restriction.listJobTitleOptions()).toEqual(expect.arrayContaining(["Associate", "Research Analyst"]));
+    await expect(callerFor(engineer).restriction.listJobTitleOptions()).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    const rules = [{ fieldType: "JOB_TITLE" as const, operator: "IS" as const, value: ["research analyst"], connector: "OR" as const }];
+    expect((await admin.restriction.previewMatchCount({ rules })).matching).toBe(1);
+
+    const analystsOnly = await admin.restriction.createRestriction({ name: "Analysts Only", rules });
+    const reloaded = (await admin.restriction.listRestrictions()).find((r) => r.id === analystsOnly.id)!;
+    expect(reloaded.rules.map((r) => [r.fieldType, r.value])).toEqual([["JOB_TITLE", ["research analyst"]]]);
+
+    const desk = await admin.desk.createDesk({ floorId: floorA.id, x: 60, y: 60 });
+    await admin.desk.save({
+      deskId: desk.id,
+      number: desk.number,
+      isActive: true,
+      requiresCheckIn: false,
+      assignmentMode: "BOOKABLE",
+      attributes: [],
+      assignments: [{ restrictionMode: "CUSTOM", restrictionId: analystsOnly.id, shiftId: shifts["Thursday Only"]! }],
+    });
+
+    const thursday = nextDateFor(4);
+    // The admin making the booking has no title; only the occupant's title counts.
+    expect((await admin.desk.checkEligibility({ deskId: desk.id, date: thursday, occupantUserId: analyst.id })).eligible).toBe(true);
+    const rejected = await admin.desk.checkEligibility({ deskId: desk.id, date: thursday, occupantUserId: associate.id });
+    expect(rejected.eligible).toBe(false);
+    expect(rejected.reason).toMatch(/Analysts Only/);
+
+    const booking = await admin.booking.create({ deskId: desk.id, date: thursday, startMinutes: 540, endMinutes: 600, forUserId: analyst.id });
+    expect(booking.userId).toBe(analyst.id);
+    await expect(
+      admin.booking.create({ deskId: desk.id, date: thursday, startMinutes: 660, endMinutes: 720, forUserId: associate.id }),
+    ).rejects.toThrow(/Analysts Only/);
+  });
 });

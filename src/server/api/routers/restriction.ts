@@ -92,6 +92,18 @@ export const restrictionRouter = createTRPCRouter({
     return [...names].sort((a, b) => a.localeCompare(b));
   }),
 
+  /** Job titles on active employee records (Entra-owned), for Job title rules — same sourcing as departments. */
+  listJobTitleOptions: siteAdminProcedure.query(async ({ ctx }) => {
+    const users = await ctx.db.user.findMany({
+      where: { title: { not: null }, isActive: true },
+      select: { title: true },
+      distinct: ["title"],
+    });
+    const titles = new Set<string>();
+    for (const u of users) if (u.title && u.title.trim().length > 0) titles.add(u.title.trim());
+    return [...titles].sort((a, b) => a.localeCompare(b));
+  }),
+
   createDepartment: siteAdminProcedure.input(departmentCreateInputSchema).mutation(async ({ ctx, input }) => {
     const existing = await ctx.db.department.findFirst({ where: { name: input.name } });
     if (existing) throw new TRPCError({ code: "CONFLICT", message: "Department already exists" });
@@ -292,7 +304,7 @@ export const restrictionRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const employees = await ctx.db.user.findMany({
         where: { isActive: true },
-        select: { id: true, email: true, department: true },
+        select: { id: true, email: true, department: true, title: true },
       });
       const rules = input.rules.map((rule, index) => ({ ...rule, sortOrder: index }));
       const matching = employees.filter((employee) => matchesRules(rules, employee)).length;

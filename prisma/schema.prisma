@@ -65,6 +65,8 @@ enum RestrictionFieldType {
   DEPARTMENT
   EMAIL
   USER
+  /// Matched against User.title (Entra job title).
+  JOB_TITLE
 }
 
 enum RestrictionOperator {
@@ -543,7 +545,7 @@ model DeskRestrictionAssignment {
   /// Department names admitted when restrictionMode = DEPARTMENT (Entra-owned strings on User.department).
   departmentNames          String[]            @default([])
   shiftId                  String
-  advanceBookingWindowDays Int? // null = site/system default
+  advanceBookingWindowDays Int? // null = no limit (any distance ahead)
   sortOrder                Int                 @default(0)
   createdAt                DateTime            @default(now())
   updatedAt                DateTime            @updatedAt

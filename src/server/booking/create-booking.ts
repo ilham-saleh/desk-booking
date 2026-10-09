@@ -117,7 +117,7 @@ export async function createBooking(
   // Restriction / shift / advance-window check — evaluated against the OCCUPANT
   // (never the admin booking on their behalf) by the shared eligibility engine.
   const occupant = subject.userId
-    ? await ctx.db.user.findFirst({ where: { id: subject.userId }, select: { id: true, email: true, department: true } })
+    ? await ctx.db.user.findFirst({ where: { id: subject.userId }, select: { id: true, email: true, department: true, title: true } })
     : null;
   if (subject.userId && !occupant) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Occupant user not found." });
@@ -128,8 +128,6 @@ export async function createBooking(
     occupant,
     date: input.date,
     today: todayInTimeZone(site.timeZone),
-    startMinutes: input.startMinutes,
-    endMinutes: input.endMinutes,
   });
   if (!eligibility.eligible) {
     const isAccessDenial =

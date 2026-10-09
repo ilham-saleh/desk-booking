@@ -101,7 +101,7 @@ export const deskRouter = createTRPCRouter({
 
       // Same rule as booking.create: only someone allowed to book for this
       // occupant (or a guest) at this site may ask about their eligibility.
-      let occupant: { id: string; email: string; department: string | null } | null = null;
+      let occupant: { id: string; email: string; department: string | null; title: string | null } | null = null;
       if (input.forGuest) {
         if (!(await canBookForUser(ctx, null, desk.floor.site.id))) {
           throw new TRPCError({ code: "FORBIDDEN", message: `You don't have permission to book for guests at ${desk.floor.site.name}.` });
@@ -113,7 +113,7 @@ export const deskRouter = createTRPCRouter({
         }
         occupant = await ctx.db.user.findFirst({
           where: { id: occupantId },
-          select: { id: true, email: true, department: true },
+          select: { id: true, email: true, department: true, title: true },
         });
         if (!occupant) throw new TRPCError({ code: "NOT_FOUND", message: "That user wasn't found in your organization." });
       }
